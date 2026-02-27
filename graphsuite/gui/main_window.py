@@ -10,7 +10,8 @@ from PySide6.QtGui import QAction, QKeySequence, QIcon, QPixmap, QPainter, QColo
 from PySide6.QtWidgets import (
     QMainWindow, QToolBar, QDockWidget, QFileDialog,
     QMessageBox, QStatusBar, QToolButton, QWidget,
-    QLabel, QDialog, QVBoxLayout, QTextEdit,
+    QLabel, QDialog, QVBoxLayout, QTextEdit, QTabWidget,
+    QScrollArea, QFrame,
 )
 
 from graphsuite.core.graph import Graph, GraphEvent
@@ -412,96 +413,468 @@ class MainWindow(QMainWindow):
             "</ul>")
 
     def _dsl_help(self) -> None:
-        """Show comprehensive DSL reference dialog."""
-        dialog = QDialog(self)
-        dialog.setWindowTitle("DSL Reference")
-        dialog.setMinimumSize(700, 550)
-        
-        layout = QVBoxLayout(dialog)
-        
-        text = QTextEdit()
-        text.setReadOnly(True)
-        text.setFont(self.font())
-        
-        reference = """\
-<h2>Graph DSL Reference</h2>
-<p>The DSL (Domain Specific Language) allows you to script graph operations.</p>
+        """Show comprehensive help dialog with Tutorial and DSL Reference."""
+        dialog = HelpDialog(self)
+        dialog.exec()
 
+
+class HelpDialog(QDialog):
+    """Comprehensive help dialog with Tutorial and DSL Reference sections."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Graph Suite Help")
+        self.setMinimumSize(900, 700)
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+
+        tabs = QTabWidget()
+        tabs.addTab(self._create_tutorial_tab(), "Tutorial")
+        tabs.addTab(self._create_dsl_tab(), "DSL Reference")
+        tabs.addTab(self._create_shortcuts_tab(), "Shortcuts")
+
+        layout.addWidget(tabs)
+
+    def _create_tutorial_tab(self) -> QWidget:
+        widget = QWidget()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setSpacing(20)
+
+        sections = [
+            ("Getting Started", self._tutorial_getting_started()),
+            ("Creating Nodes", self._tutorial_nodes()),
+            ("Creating Edges", self._tutorial_edges()),
+            ("Selecting & Editing", self._tutorial_editing()),
+            ("Navigation", self._tutorial_navigation()),
+            ("Graph Properties", self._tutorial_properties()),
+            ("Running Algorithms", self._tutorial_algorithms()),
+            ("Saving & Exporting", self._tutorial_export()),
+        ]
+
+        for title, html in sections:
+            label = QLabel()
+            label.setWordWrap(True)
+            label.setTextFormat(Qt.TextFormat.RichText)
+            label.setText(f"<h2>{title}</h2>{html}")
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(label)
+
+        layout.addStretch()
+        scroll.setWidget(content)
+        widget.setLayout(QVBoxLayout())
+        widget.layout().addWidget(scroll)
+        return widget
+
+    def _tutorial_getting_started(self) -> str:
+        return """\
+<p>Welcome to Graph Suite! This tutorial will guide you through the basics.</p>
+
+<h3>The Interface</h3>
+<ul>
+  <li><b>Canvas (center)</b> — Where you create and edit your graph</li>
+  <li><b>Toolbar (top)</b> — Quick access to tools and commands</li>
+  <li><b>Adjacency Matrix (right)</b> — Edit graph structure as a matrix</li>
+  <li><b>Algorithms (right)</b> — Run graph algorithms</li>
+  <li><b>Script Console (bottom)</b> — Write and execute DSL scripts</li>
+</ul>
+
+<h3>Your First Graph</h3>
+<ol>
+  <li>Click the <b>"Add Node"</b> button (or press <b>N</b>)</li>
+  <li>Click anywhere on the canvas to place a node</li>
+  <li>Click <b>"Add Edge"</b> (or press <b>E</b>)</li>
+  <li>Click two nodes to connect them</li>
+</ol>"""
+
+    def _tutorial_nodes(self) -> str:
+        return """\
+<h3>Add a Node</h3>
+<ol>
+  <li>Select the <b>"Add Node"</b> tool from toolbar (or press <b>N</b>)</li>
+  <li>Click on the canvas where you want the node</li>
+  <li>Nodes are auto-named (v1, v2, ...) or use context menu to name</li>
+</ol>
+
+<h3>Name a Node</h3>
+<ul>
+  <li><b>Double-click</b> the node to rename it</li>
+  <li>Or right-click → "Rename…"</li>
+</ul>
+
+<h3>Color a Node</h3>
+<ul>
+  <li>Right-click the node → "Change Color…"</li>
+  <li>Pick a color from the dialog</li>
+</ul>
+
+<h3>Move a Node</h3>
+<ul>
+  <li>Select mode (<b>S</b>)</li>
+  <li>Click and drag the node</li>
+  <li>Drag multiple: Ctrl+click to select, then drag</li>
+</ul>"""
+
+    def _tutorial_edges(self) -> str:
+        return """\
+<h3>Add an Edge</h3>
+<ol>
+  <li>Select <b>"Add Edge"</b> tool (or press <b>E</b>)</li>
+  <li>Click the source node</li>
+  <li>Click the target node</li>
+</ol>
+
+<h3>Set Edge Weight</h3>
+<ul>
+  <li>Enable weighted mode: toggle "Weighted" in toolbar</li>
+  <li>Double-click the edge to edit weight</li>
+  <li>Or edit directly in the Adjacency Matrix</li>
+</ul>
+
+<h3>Directed vs Undirected</h3>
+<ul>
+  <li><b>Directed</b>: Edges have direction (arrow)</li>
+  <li><b>Undirected</b>: Edges go both ways (no arrow)</li>
+  <li>Toggle with the "Directed" button or Graph menu</li>
+</ul>
+
+<h3>Bidirectional Edges</h3>
+<p>Create two opposite edges between same nodes, or use DSL: <code>edge A &lt;-&gt; B</code></p>"""
+
+    def _tutorial_editing(self) -> str:
+        return """\
+<h3>Select Items</h3>
+<ul>
+  <li>Click a node to select it</li>
+  <li>Ctrl+click to add to selection</li>
+  <li>Click empty space to deselect</li>
+</ul>
+
+<h3>Delete Items</h3>
+<ul>
+  <li>Select <b>"Delete"</b> tool (or press <b>D</b>)</li>
+  <li>Click the node or edge to remove</li>
+  <li>Or select and press <b>Delete</b> key</li>
+</ul>
+
+<h3>Undo/Redo</h3>
+<ul>
+  <li><b>Ctrl+Z</b> — Undo last action</li>
+  <li><b>Ctrl+Y</b> — Redo undone action</li>
+  <li>Undo history shown in status bar</li>
+</ul>"""
+
+    def _tutorial_navigation(self) -> str:
+        return """\
+<h3>Pan the View</h3>
+<ul>
+  <li><b>Click-drag on empty space</b> to pan</li>
+  <li><b>Middle mouse drag</b> to pan (any mode)</li>
+</ul>
+
+<h3>Zoom</h3>
+<ul>
+  <li><b>Mouse wheel</b> — Zoom in/out</li>
+  <li><b>Zoom + / -</b> buttons in toolbar</li>
+  <li><b>Ctrl++ / Ctrl+-</b> keyboard shortcuts</li>
+</ul>
+
+<h3>Fit View</h3>
+<ul>
+  <li>Press <b>F</b> to fit all nodes on screen</li>
+  <li>Or click "Fit" in toolbar</li>
+</ul>"""
+
+    def _tutorial_properties(self) -> str:
+        return """\
+<h3>Toggle Graph Type</h3>
+<ul>
+  <li><b>Directed/Undirected</b>: Toolbar toggle or Graph menu</li>
+  <li><b>Weighted/Unweighted</b>: Toolbar toggle or Graph menu</li>
+</ul>
+
+<h3>Matrix Editor</h3>
+<ul>
+  <li><b>Adjacency Matrix</b>: Edit edge weights directly</li>
+  <li><b>Incidence Matrix</b>: View node-edge relationships</li>
+  <li>Click "+ Node" to add nodes from matrix</li>
+  <li>Click "Apply Matrix" to rebuild from edits</li>
+</ul>"""
+
+    def _tutorial_algorithms(self) -> str:
+        return """\
+<h3>Run an Algorithm</h3>
+<ol>
+  <li>Open the "Algorithms" panel (right dock)</li>
+  <li>Select an algorithm from dropdown</li>
+  <li>Enter required parameters (source/target nodes)</li>
+  <li>Click "Run"</li>
+</ol>
+
+<h3>Available Algorithms</h3>
+<ul>
+  <li><b>BFS/DFS Traversal</b> — Explore graph order</li>
+  <li><b>Dijkstra/Bellman-Ford</b> — Shortest path</li>
+  <li><b>MST</b> — Minimum spanning tree (undirected)</li>
+  <li><b>Topological Sort</b> — Ordering (directed acyclic)</li>
+  <li><b>Components</b> — Connected components</li>
+  <li><b>SCC</b> — Strongly connected components</li>
+  <li><b>Cycle Detection</b> — Find cycles</li>
+  <li><b>Centrality</b> — Node importance</li>
+</ul>
+
+<h3>Results</h3>
+<ul>
+  <li>Output appears in the Results box</li>
+  <li>Highlighted nodes/edges shown on canvas</li>
+  <li>Click "Clear Highlight" to remove</li>
+</ul>"""
+
+    def _tutorial_export(self) -> str:
+        return """\
+<h3>Save Graph</h3>
+<ul>
+  <li><b>File → Save</b> (Ctrl+S)</li>
+  <li><b>File → Save As…</b> (Ctrl+Shift+S)</li>
+  <li>Format: JSON (.graph.json)</li>
+</ul>
+
+<h3>Export as Image</h3>
+<ul>
+  <li><b>File → Export PNG…</b></li>
+  <li>Choose location and filename</li>
+  <li>Current canvas view is exported</li>
+</ul>
+
+<h3>Load Graph</h3>
+<ul>
+  <li><b>File → Open…</b> (Ctrl+O)</li>
+  <li>Select a .graph.json file</li>
+</ul>"""
+
+    def _create_dsl_tab(self) -> QWidget:
+        widget = QWidget()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setSpacing(20)
+
+        sections = [
+            ("Introduction", self._dsl_intro()),
+            ("Comments & Settings", self._dsl_settings()),
+            ("Node Commands", self._dsl_nodes()),
+            ("Edge Commands", self._dsl_edges()),
+            ("Algorithm Commands", self._dsl_algorithms()),
+            ("Layout Commands", self._dsl_layout()),
+            ("Example Scripts", self._dsl_examples()),
+        ]
+
+        for title, html in sections:
+            label = QLabel()
+            label.setWordWrap(True)
+            label.setTextFormat(Qt.TextFormat.RichText)
+            label.setText(f"<h2>{title}</h2>{html}")
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(label)
+
+        layout.addStretch()
+        scroll.setWidget(content)
+        widget.setLayout(QVBoxLayout())
+        widget.layout().addWidget(scroll)
+        return widget
+
+    def _dsl_intro(self) -> str:
+        return """\
+<p>The DSL (Domain Specific Language) lets you script graph operations.
+Write scripts in the Console panel at the bottom and click "Run Script".</p>
+
+<h3>Why Use DSL?</h3>
+<ul>
+  <li>Create complex graphs quickly</li>
+  <li>Reproduce graphs exactly</li>
+  <li>Automate repetitive tasks</li>
+  <li>Share graph definitions</li>
+</ul>"""
+
+    def _dsl_settings(self) -> str:
+        return """\
 <h3>Comments</h3>
-<pre># This is a comment - lines starting with # are ignored</pre>
+<pre># Lines starting with # are ignored</pre>
 
-<h3>Graph Settings</h3>
-<pre>set directed true      # Make graph directed (default)
-set directed false     # Make graph undirected
-set weighted true      # Enable edge weights
-set weighted false     # Disable edge weights (default)</pre>
+<h3>Graph Mode</h3>
+<pre>set directed true    # Directed edges (default)
+set directed false   # Undirected edges
+set weighted true    # Enable weights
+set weighted false   # Disable weights (default)</pre>"""
 
-<h3>Node Operations</h3>
-<pre>node A                 # Add node named 'A' at default position
-node B at 100 200      # Add node 'B' at coordinates (100, 200)
-delete node A          # Remove node 'A' and its edges
-rename A B             # Rename node 'A' to 'B'
-color A #ff0000        # Set node 'A' color to red (#rrggbb)</pre>
+    def _dsl_nodes(self) -> str:
+        return """\
+<h3>Add Node</h3>
+<pre>node A              # Auto position
+node B at 100 200   # Specific coordinates</pre>
 
-<h3>Edge Operations</h3>
-<pre>edge A -> B            # Add directed edge A to B
-edge A -- B            # Add undirected edge between A and B
-edge A -> B weight 5   # Add directed edge with weight 5
-edge A <-> B           # Add bidirectional edges (both directions)
-delete edge A B        # Remove edge from A to B</pre>
+<h3>Delete Node</h3>
+<pre>delete node A</pre>
 
-<h3>Algorithms</h3>
-<pre>run bfs from A         # BFS traversal starting from A
-run dfs from A         # DFS traversal starting from A
-run dijkstra from A to B    # Shortest path A→B (Dijkstra)
-run bellman from A to B     # Shortest path A→B (Bellman-Ford)
-run mst                # Minimum Spanning Tree (undirected only)
-run topo               # Topological sort (directed acyclic)
-run components         # Connected components
-run scc                # Strongly connected components (directed)
-run cycle              # Detect and show cycles
-run info               # Display graph statistics
-run centrality         # Calculate degree centrality</pre>
+<h3>Rename Node</h3>
+<pre>rename old new</pre>
 
-<h3>Layout & View</h3>
-<pre>layout circle          # Arrange nodes in a circle
-layout spring          # Force-directed spring layout
-clear                  # Remove all nodes and edges
-fit                    # Fit all nodes in view</pre>
+<h3>Set Color</h3>
+<pre>color A #ff5500    # Hex color code</pre>"""
 
-<h3>Example Script</h3>
-<pre># Create a weighted directed graph
-set directed true
+    def _dsl_edges(self) -> str:
+        return """\
+<h3>Add Directed Edge</h3>
+<pre>edge A -> B              # Basic directed
+edge A -> B weight 5     # With weight</pre>
+
+<h3>Add Undirected Edge</h3>
+<pre>edge A -- B              # Undirected</pre>
+
+<h3>Add Bidirectional Edges</h3>
+<pre>edge A <-> B             # Both directions at once</pre>
+
+<h3>Delete Edge</h3>
+<pre>delete edge A B</pre>"""
+
+    def _dsl_algorithms(self) -> str:
+        return """\
+<h3>Traversal</h3>
+<pre>run bfs from A       # Breadth-first search
+run dfs from A       # Depth-first search</pre>
+
+<h3>Shortest Path</h3>
+<pre>run dijkstra from A to B
+run bellman from A to B</pre>
+
+<h3>Structural Analysis</h3>
+<pre>run mst              # Minimum spanning tree
+run topo             # Topological sort
+run components       # Connected components
+run scc              # Strongly connected components
+run cycle            # Find cycles
+run centrality       # Degree centrality
+run info             # Graph statistics</pre>"""
+
+    def _dsl_layout(self) -> str:
+        return """\
+<h3>Apply Layout</h3>
+<pre>layout circle        # Circular arrangement
+layout spring        # Force-directed</pre>
+
+<h3>View & Clear</h3>
+<pre>fit                  # Fit view to nodes
+clear                # Remove everything</pre>"""
+
+    def _dsl_examples(self) -> str:
+        return """\
+<h3>Simple Path Graph</h3>
+<pre>set directed true
+node A at 100 200
+node B at 250 200
+node C at 400 200
+edge A -> B
+edge B -> C</pre>
+
+<h3>Weighted Cycle</h3>
+<pre>set weighted true
+node 1 at 200 100
+node 2 at 350 200
+node 3 at 300 350
+node 4 at 100 350
+node 5 at 50 200
+edge 1 -> 2 weight 3
+edge 2 -> 3 weight 1
+edge 3 -> 4 weight 4
+edge 4 -> 5 weight 2
+edge 5 -> 1 weight 5</pre>
+
+<h3>Complete Script</h3>
+<pre># Create and analyze a graph
+set directed false
 set weighted true
 
-node A at 100 100
-node B at 300 100
-node C at 200 250
+# Nodes in a pentagon
+node A at 200 100
+node B at 350 200
+node C at 300 350
+node D at 100 350
+node E at 50 200
 
-edge A -> B weight 4
-edge B -> C weight 2
-edge A -> C weight 7
+# Edges with weights
+edge A -- B weight 4
+edge B -- C weight 2
+edge C -- D weight 3
+edge D -- E weight 1
+edge E -- A weight 5
 
-run dijkstra from A to C
-layout spring</pre>
+# Run algorithms
+run mst
+run bfs from A</pre>"""
 
-<h3>Keyboard Shortcuts</h3>
-<ul>
-  <li><b>S</b> - Select mode</li>
-  <li><b>N</b> - Add node mode</li>
-  <li><b>E</b> - Add edge mode</li>
-  <li><b>D</b> - Delete mode</li>
-  <li><b>F</b> - Fit view</li>
-  <li><b>Delete/Backspace</b> - Delete selected</li>
-  <li><b>Ctrl+Z</b> - Undo</li>
-  <li><b>Ctrl+Y</b> - Redo</li>
-  <li><b>Ctrl++</b> - Zoom in</li>
-  <li><b>Ctrl+-</b> - Zoom out</li>
-  <li><b>Middle mouse drag</b> - Pan view</li>
-  <li><b>Mouse wheel</b> - Zoom in/out</li>
-</ul>
+    def _create_shortcuts_tab(self) -> QWidget:
+        widget = QWidget()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setSpacing(20)
+
+        shortcuts = """\
+<h2>Keyboard Shortcuts</h2>
+
+<h3>Modes</h3>
+<table cellpadding="8">
+  <tr><td><b>S</b></td><td>Select mode</td></tr>
+  <tr><td><b>N</b></td><td>Add node mode</td></tr>
+  <tr><td><b>E</b></td><td>Add edge mode</td></tr>
+  <tr><td><b>D</b></td><td>Delete mode</td></tr>
+</table>
+
+<h3>View</h3>
+<table cellpadding="8">
+  <tr><td><b>F</b></td><td>Fit view</td></tr>
+  <tr><td><b>Ctrl++</b></td><td>Zoom in</td></tr>
+  <tr><td><b>Ctrl+-</b></td><td>Zoom out</td></tr>
+  <tr><td><b>Mouse wheel</b></td><td>Zoom in/out</td></tr>
+  <tr><td><b>Middle drag</b></td><td>Pan view</td></tr>
+</table>
+
+<h3>Edit</h3>
+<table cellpadding="8">
+  <tr><td><b>Ctrl+Z</b></td><td>Undo</td></tr>
+  <tr><td><b>Ctrl+Y</b></td><td>Redo</td></tr>
+  <tr><td><b>Delete</b></td><td>Delete selected</td></tr>
+  <tr><td><b>Ctrl+click</b></td><td>Add to selection</td></tr>
+</table>
+
+<h3>File</h3>
+<table cellpadding="8">
+  <tr><td><b>Ctrl+N</b></td><td>New graph</td></tr>
+  <tr><td><b>Ctrl+O</b></td><td>Open graph</td></tr>
+  <tr><td><b>Ctrl+S</b></td><td>Save graph</td></tr>
+  <tr><td><b>Ctrl+Q</b></td><td>Quit</td></tr>
+</table>
 """
-        text.setHtml(reference)
-        layout.addWidget(text)
-        
-        dialog.exec()
+        label = QLabel(shortcuts)
+        label.setWordWrap(True)
+        label.setTextFormat(Qt.TextFormat.RichText)
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(label)
+        layout.addStretch()
+
+        scroll.setWidget(content)
+        widget.setLayout(QVBoxLayout())
+        widget.layout().addWidget(scroll)
+        return widget

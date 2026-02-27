@@ -19,20 +19,12 @@ from graphsuite.core.graph import Graph, GraphEvent, Node, Edge
 from graphsuite.gui.style import Colors
 
 
-# ---------------------------------------------------------------------------
-# Interaction modes
-# ---------------------------------------------------------------------------
-
 class CanvasMode(Enum):
     SELECT = auto()
     ADD_NODE = auto()
     ADD_EDGE = auto()
     DELETE = auto()
 
-
-# ---------------------------------------------------------------------------
-# Canvas widget
-# ---------------------------------------------------------------------------
 
 class GraphCanvas(QWidget):
     """Custom-painted widget for interactive graph editing."""

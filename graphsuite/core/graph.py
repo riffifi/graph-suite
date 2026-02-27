@@ -14,10 +14,6 @@ import networkx as nx
 import numpy as np
 
 
-# ---------------------------------------------------------------------------
-# Data classes
-# ---------------------------------------------------------------------------
-
 @dataclass
 class Node:
     name: str
@@ -55,10 +51,6 @@ class Edge:
         return cls(**d)
 
 
-# ---------------------------------------------------------------------------
-# Event types
-# ---------------------------------------------------------------------------
-
 class GraphEvent(Enum):
     NODE_ADDED = auto()
     NODE_REMOVED = auto()
@@ -74,10 +66,6 @@ class GraphEvent(Enum):
     WEIGHTED_CHANGED = auto()
     UNDO_REDO = auto()
 
-
-# ---------------------------------------------------------------------------
-# Graph model
-# ---------------------------------------------------------------------------
 
 class Graph:
     """Central graph model – single source of truth for the application."""
