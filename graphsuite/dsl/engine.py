@@ -634,9 +634,14 @@ class DSLConsole(QWidget):
         btn_example = QPushButton("Load Example")
         btn_example.clicked.connect(self._load_example)
 
+        btn_graph_to_script = QPushButton("Graph → Script")
+        btn_graph_to_script.setToolTip("Generate DSL script from current graph")
+        btn_graph_to_script.clicked.connect(self._graph_to_script)
+
         btn_row.addWidget(btn_run)
         btn_row.addWidget(btn_clear)
         btn_row.addWidget(btn_example)
+        btn_row.addWidget(btn_graph_to_script)
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
@@ -678,3 +683,40 @@ edge B -> D weight 7
 layout spring
 """
         self._editor.setPlainText(example)
+
+    def _graph_to_script(self) -> None:
+        """Generate DSL script from current graph."""
+        lines = ["# Generated from current graph"]
+        
+        # Graph settings
+        lines.append(f"set directed {str(self.graph.directed).lower()}")
+        lines.append(f"set weighted {str(self.graph.weighted).lower()}")
+        lines.append("")
+        
+        # Nodes with positions
+        for node in self.graph.nodes.values():
+            x, y = int(node.x), int(node.y)
+            lines.append(f"node {node.name} at {x} {y}")
+        
+        lines.append("")
+        
+        # Edges
+        for edge in self.graph.edges:
+            if self.graph.weighted:
+                weight_str = f" weight {edge.weight}" if edge.weight != 1 else ""
+            else:
+                weight_str = ""
+            
+            if self.graph.directed:
+                # Check if reverse edge exists (bidirectional)
+                has_reverse = self.graph.has_edge(edge.target, edge.source)
+                if has_reverse and edge.source < edge.target:
+                    # Only output once for bidirectional pairs
+                    lines.append(f"edge {edge.source} <-> {edge.target}{weight_str}")
+                elif not has_reverse:
+                    lines.append(f"edge {edge.source} -> {edge.target}{weight_str}")
+            else:
+                lines.append(f"edge {edge.source} -- {edge.target}{weight_str}")
+        
+        self._editor.setPlainText("\n".join(lines))
+        self._output.setPlainText(f"Generated {len(self.graph.nodes)} nodes and {len(self.graph.edges)} edges as DSL script.")
