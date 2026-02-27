@@ -337,13 +337,20 @@ class GraphCanvas(QWidget):
         loop_r = node.radius * 1.2
         cx = node.x
         cy = node.y - node.radius - loop_r + 4
+        
+        # Draw the loop circle
         p.drawEllipse(QPointF(cx, cy), loop_r, loop_r)
 
         if self.graph.directed:
-            # small arrowhead at reconnection point
-            self._draw_arrowhead(p, cx + loop_r, cy,
-                                 node.x + 4, node.y - node.radius,
-                                 color, width)
+            # Arrowhead at the bottom of the loop where it reconnects to node
+            # The loop goes from top of node, around, and back to top
+            arrow_x = node.x
+            arrow_y = node.y - node.radius  # Top of node where loop connects
+            # Point slightly inside the loop for proper arrow placement
+            base_x = arrow_x
+            base_y = arrow_y - 2
+            
+            self._draw_arrowhead_at_top(p, base_x, base_y, arrow_x, arrow_y, color, width)
 
         if self.graph.weighted:
             font = QFont("sans-serif", 10)
@@ -352,6 +359,29 @@ class GraphCanvas(QWidget):
             p.setPen(QPen(QColor(Colors.EDGE_WEIGHT)))
             w_text = f"{edge.weight:g}"
             p.drawText(QPointF(cx - 8, cy - loop_r - 4), w_text)
+
+    def _draw_arrowhead_at_top(self, p: QPainter, sx: float, sy: float,
+                                tx: float, ty: float,
+                                color: str, width: float) -> None:
+        """Draw arrowhead pointing downward (for self-loop at top of node)."""
+        size = 10
+        # Arrow pointing down from the loop back to node
+        tip_x = tx
+        tip_y = ty + 3  # Slightly into the node
+        base_y = ty - size + 3
+        
+        # Left and right points of arrow base
+        left_x = tip_x - size * 0.5
+        right_x = tip_x + size * 0.5
+        
+        poly = QPolygonF([
+            QPointF(tip_x, tip_y),
+            QPointF(left_x, base_y),
+            QPointF(right_x, base_y)
+        ])
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(QColor(color)))
+        p.drawPolygon(poly)
 
     # -- mouse handling ----------------------------------------------------
 
