@@ -367,7 +367,7 @@ class GraphCanvas(QWidget):
         pos = QPointF(event.position())
         scene = self._to_scene(pos)
 
-        # middle-click or Space+left-click → start pan
+        # middle-click → start pan
         if event.button() == Qt.MouseButton.MiddleButton:
             self._start_pan(pos)
             return
@@ -378,11 +378,6 @@ class GraphCanvas(QWidget):
             return
 
         if event.button() != Qt.MouseButton.LeftButton:
-            return
-
-        # Spacebar + left-click → pan
-        if event.modifiers() & Qt.KeyboardModifier.SpaceModifier:
-            self._start_pan(pos)
             return
 
         node = self.graph.node_at(scene.x(), scene.y())
@@ -409,12 +404,14 @@ class GraphCanvas(QWidget):
                     self._selected_nodes.clear()
                     self.selection_changed.emit()
                 else:
-                    # Click on empty space → start pan
+                    # Click on empty space in SELECT mode → start pan
                     self._start_pan(pos)
                     return
 
         elif self._mode == CanvasMode.ADD_NODE:
             self.graph.add_node(x=scene.x(), y=scene.y())
+            self.update()
+            return
 
         elif self._mode == CanvasMode.ADD_EDGE:
             if node:
@@ -424,6 +421,8 @@ class GraphCanvas(QWidget):
                     self.graph.add_edge(self._edge_src, node.name)
                     self._edge_src = None
                     self._edge_temp_end = None
+                self.update()
+                return
 
         elif self._mode == CanvasMode.DELETE:
             if node:
@@ -433,6 +432,8 @@ class GraphCanvas(QWidget):
                 edge = self.graph.edge_at(scene.x(), scene.y())
                 if edge:
                     self.graph.remove_edge(edge.source, edge.target)
+            self.update()
+            return
 
         self.update()
 
