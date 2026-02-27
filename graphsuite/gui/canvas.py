@@ -367,12 +367,9 @@ class GraphCanvas(QWidget):
         pos = QPointF(event.position())
         scene = self._to_scene(pos)
 
-        # middle-click → start pan
+        # middle-click or Space+left-click → start pan
         if event.button() == Qt.MouseButton.MiddleButton:
-            self._panning = True
-            self._pan_start = pos
-            self._pan_start_offset = QPointF(self._pan)
-            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            self._start_pan(pos)
             return
 
         # right-click → context menu
@@ -381,6 +378,11 @@ class GraphCanvas(QWidget):
             return
 
         if event.button() != Qt.MouseButton.LeftButton:
+            return
+
+        # Spacebar + left-click → pan
+        if event.modifiers() & Qt.KeyboardModifier.SpaceModifier:
+            self._start_pan(pos)
             return
 
         node = self.graph.node_at(scene.x(), scene.y())
@@ -407,9 +409,9 @@ class GraphCanvas(QWidget):
                     self._selected_nodes.clear()
                     self.selection_changed.emit()
                 else:
-                    self._selected_nodes.clear()
-                    self._selected_edges.clear()
-                    self.selection_changed.emit()
+                    # Click on empty space → start pan
+                    self._start_pan(pos)
+                    return
 
         elif self._mode == CanvasMode.ADD_NODE:
             self.graph.add_node(x=scene.x(), y=scene.y())
@@ -433,6 +435,13 @@ class GraphCanvas(QWidget):
                     self.graph.remove_edge(edge.source, edge.target)
 
         self.update()
+
+    def _start_pan(self, pos: QPointF) -> None:
+        """Start panning the view."""
+        self._panning = True
+        self._pan_start = pos
+        self._pan_start_offset = QPointF(self._pan)
+        self.setCursor(Qt.CursorShape.ClosedHandCursor)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         pos = QPointF(event.position())
@@ -478,8 +487,14 @@ class GraphCanvas(QWidget):
         if event.button() == Qt.MouseButton.MiddleButton:
             self._panning = False
             self._pan_start = None
+            self._pan_start_offset = None
             self._update_cursor()
         if event.button() == Qt.MouseButton.LeftButton:
+            if self._panning:
+                self._panning = False
+                self._pan_start = None
+                self._pan_start_offset = None
+                self._update_cursor()
             if self._dragging_node:
                 # record undo for final position
                 self.graph.move_node(self._dragging_node,
