@@ -424,30 +424,53 @@ class HelpDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Graph Suite Help")
-        self.setMinimumSize(900, 700)
+        self.setMinimumSize(1000, 750)
+        self._current_section = 0
         self._build_ui()
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        tabs = QTabWidget()
-        tabs.addTab(self._create_tutorial_tab(), "Tutorial")
-        tabs.addTab(self._create_dsl_tab(), "DSL Reference")
-        tabs.addTab(self._create_shortcuts_tab(), "Shortcuts")
+        # Top tabs
+        self._tabs = QTabWidget()
+        self._tabs.setStyleSheet("""
+            QTabWidget::pane {
+                border: none;
+                background-color: #1e1e2e;
+            }
+            QTabBar::tab {
+                background-color: #252536;
+                color: #e0e0e0;
+                padding: 12px 24px;
+                border: none;
+                border-right: 1px solid #3a3a50;
+            }
+            QTabBar::tab:selected {
+                background-color: #1e1e2e;
+                border-bottom: 2px solid #7c4dff;
+            }
+            QTabBar::tab:hover:!selected {
+                background-color: #2a2a3c;
+            }
+        """)
 
-        layout.addWidget(tabs)
+        self._tabs.addTab(self._create_tutorial_tab(), "Tutorial")
+        self._tabs.addTab(self._create_dsl_tab(), "DSL Reference")
+        self._tabs.addTab(self._create_shortcuts_tab(), "Shortcuts")
+
+        self._tabs.currentChanged.connect(self._on_tab_changed)
+        layout.addWidget(self._tabs)
 
     def _create_tutorial_tab(self) -> QWidget:
         widget = QWidget()
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setSpacing(20)
-
-        sections = [
+        # Left sidebar
+        sidebar = self._create_sidebar([
             ("Getting Started", self._tutorial_getting_started()),
             ("Creating Nodes", self._tutorial_nodes()),
             ("Creating Edges", self._tutorial_edges()),
@@ -456,21 +479,194 @@ class HelpDialog(QDialog):
             ("Graph Properties", self._tutorial_properties()),
             ("Running Algorithms", self._tutorial_algorithms()),
             ("Saving & Exporting", self._tutorial_export()),
-        ]
+        ])
 
-        for title, html in sections:
-            label = QLabel()
-            label.setWordWrap(True)
-            label.setTextFormat(Qt.TextFormat.RichText)
-            label.setText(f"<h2>{title}</h2>{html}")
-            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            layout.addWidget(label)
+        # Content area
+        self._tutorial_content = QTextEdit()
+        self._tutorial_content.setReadOnly(True)
+        self._tutorial_content.setHtml(self._tutorial_getting_started())
+        self._tutorial_content.setStyleSheet("""
+            QTextEdit {
+                background-color: #1e1e2e;
+                color: #e0e0e0;
+                border: none;
+                padding: 20px 30px;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+            h2 { color: #7c4dff; font-size: 24px; margin-bottom: 15px; border-bottom: 1px solid #3a3a50; padding-bottom: 10px; }
+            h3 { color: #4fc3f7; font-size: 16px; margin-top: 20px; margin-bottom: 10px; }
+            p { margin: 10px 0; line-height: 1.7; }
+            ul, ol { margin: 10px 0; padding-left: 25px; }
+            li { margin: 6px 0; }
+            code { background-color: #2a2a3c; padding: 2px 6px; border-radius: 3px; color: #66bb6a; }
+            pre { background-color: #252536; padding: 15px; border-radius: 6px; overflow-x: auto; }
+        """)
+
+        layout.addWidget(sidebar, 0)
+        layout.addWidget(self._tutorial_content, 1)
+        return widget
+
+    def _create_dsl_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Left sidebar
+        sidebar = self._create_sidebar([
+            ("Introduction", self._dsl_intro()),
+            ("Comments & Settings", self._dsl_settings()),
+            ("Node Commands", self._dsl_nodes()),
+            ("Edge Commands", self._dsl_edges()),
+            ("Algorithm Commands", self._dsl_algorithms()),
+            ("Layout Commands", self._dsl_layout()),
+            ("Example Scripts", self._dsl_examples()),
+        ])
+
+        # Content area
+        self._dsl_content = QTextEdit()
+        self._dsl_content.setReadOnly(True)
+        self._dsl_content.setHtml(self._dsl_intro())
+        self._dsl_content.setStyleSheet("""
+            QTextEdit {
+                background-color: #1e1e2e;
+                color: #e0e0e0;
+                border: none;
+                padding: 20px 30px;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+            h2 { color: #7c4dff; font-size: 24px; margin-bottom: 15px; border-bottom: 1px solid #3a3a50; padding-bottom: 10px; }
+            h3 { color: #4fc3f7; font-size: 16px; margin-top: 20px; margin-bottom: 10px; }
+            p { margin: 10px 0; line-height: 1.7; }
+            ul, ol { margin: 10px 0; padding-left: 25px; }
+            li { margin: 6px 0; }
+            code { background-color: #2a2a3c; padding: 2px 6px; border-radius: 3px; color: #66bb6a; }
+            pre { background-color: #252536; padding: 15px; border-radius: 6px; overflow-x: auto; font-family: "JetBrains Mono", "Fira Code", monospace; font-size: 13px; }
+        """)
+
+        layout.addWidget(sidebar, 0)
+        layout.addWidget(self._dsl_content, 1)
+        return widget
+
+    def _create_shortcuts_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Left sidebar
+        shortcuts_data = [
+            ("Modes", self._shortcuts_modes()),
+            ("View", self._shortcuts_view()),
+            ("Edit", self._shortcuts_edit()),
+            ("File", self._shortcuts_file()),
+        ]
+        sidebar = self._create_sidebar(shortcuts_data)
+
+        # Content area
+        self._shortcuts_content = QTextEdit()
+        self._shortcuts_content.setReadOnly(True)
+        self._shortcuts_content.setHtml(self._shortcuts_modes())
+        self._shortcuts_content.setStyleSheet("""
+            QTextEdit {
+                background-color: #1e1e2e;
+                color: #e0e0e0;
+                border: none;
+                padding: 20px 30px;
+                font-size: 14px;
+            }
+            h2 { color: #7c4dff; font-size: 24px; margin-bottom: 15px; border-bottom: 1px solid #3a3a50; padding-bottom: 10px; }
+            h3 { color: #4fc3f7; font-size: 16px; margin-top: 20px; margin-bottom: 10px; }
+            table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+            td { padding: 10px 15px; border: 1px solid #3a3a50; }
+            td:first-child { background-color: #252536; font-weight: bold; color: #4fc3f7; width: 150px; }
+            tr:hover { background-color: #2a2a3c; }
+        """)
+
+        layout.addWidget(sidebar, 0)
+        layout.addWidget(self._shortcuts_content, 1)
+        return widget
+
+    def _create_sidebar(self, sections: list[tuple[str, str]]) -> QFrame:
+        """Create left sidebar with navigation buttons."""
+        sidebar = QFrame()
+        sidebar.setFrameShape(QFrame.Shape.NoFrame)
+        sidebar.setStyleSheet("""
+            QFrame {
+                background-color: #252536;
+                border-right: 1px solid #3a3a50;
+            }
+            QPushButton {
+                background-color: transparent;
+                color: #e0e0e0;
+                border: none;
+                padding: 12px 16px;
+                text-align: left;
+                font-size: 13px;
+                border-left: 3px solid transparent;
+            }
+            QPushButton:hover {
+                background-color: #2a2a3c;
+            }
+            QPushButton:checked {
+                background-color: #2a2a3c;
+                border-left-color: #7c4dff;
+                font-weight: bold;
+            }
+        """)
+
+        layout = QVBoxLayout(sidebar)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self._sidebar_buttons: list[QPushButton] = []
+        self._sidebar_content: list[str] = []
+
+        for i, (title, content) in enumerate(sections):
+            btn = QPushButton(f"  {title}")
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda checked, idx=i: self._on_section_clicked(idx))
+            layout.addWidget(btn)
+            self._sidebar_buttons.append(btn)
+            self._sidebar_content.append(content)
 
         layout.addStretch()
-        scroll.setWidget(content)
-        widget.setLayout(QVBoxLayout())
-        widget.layout().addWidget(scroll)
-        return widget
+
+        # Select first button
+        if self._sidebar_buttons:
+            self._sidebar_buttons[0].setChecked(True)
+
+        return sidebar
+
+    def _on_section_clicked(self, index: int) -> None:
+        """Handle sidebar button click."""
+        # Uncheck all other buttons
+        for i, btn in enumerate(self._sidebar_buttons):
+            if i != index:
+                btn.setChecked(False)
+
+        # Update content based on which tab is active
+        current_tab = self._tabs.currentIndex()
+        content = self._sidebar_content[index]
+
+        if current_tab == 0:  # Tutorial
+            self._tutorial_content.setHtml(content)
+        elif current_tab == 1:  # DSL
+            self._dsl_content.setHtml(content)
+        elif current_tab == 2:  # Shortcuts
+            self._shortcuts_content.setHtml(content)
+
+    def _on_tab_changed(self, index: int) -> None:
+        """Handle tab switch - reset sidebar buttons."""
+        # Reset sidebar buttons for new tab
+        if hasattr(self, '_sidebar_buttons') and self._sidebar_buttons:
+            for btn in self._sidebar_buttons:
+                btn.setChecked(False)
+            self._sidebar_buttons[0].setChecked(True)
+            # Update content to first section
+            self._on_section_clicked(0)
 
     def _tutorial_getting_started(self) -> str:
         return """\
@@ -658,40 +854,6 @@ class HelpDialog(QDialog):
   <li>Select a .graph.json file</li>
 </ul>"""
 
-    def _create_dsl_tab(self) -> QWidget:
-        widget = QWidget()
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setSpacing(20)
-
-        sections = [
-            ("Introduction", self._dsl_intro()),
-            ("Comments & Settings", self._dsl_settings()),
-            ("Node Commands", self._dsl_nodes()),
-            ("Edge Commands", self._dsl_edges()),
-            ("Algorithm Commands", self._dsl_algorithms()),
-            ("Layout Commands", self._dsl_layout()),
-            ("Example Scripts", self._dsl_examples()),
-        ]
-
-        for title, html in sections:
-            label = QLabel()
-            label.setWordWrap(True)
-            label.setTextFormat(Qt.TextFormat.RichText)
-            label.setText(f"<h2>{title}</h2>{html}")
-            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            layout.addWidget(label)
-
-        layout.addStretch()
-        scroll.setWidget(content)
-        widget.setLayout(QVBoxLayout())
-        widget.layout().addWidget(scroll)
-        return widget
-
     def _dsl_intro(self) -> str:
         return """\
 <p>The DSL (Domain Specific Language) lets you script graph operations.
@@ -821,60 +983,44 @@ edge E -- A weight 5
 run mst
 run bfs from A</pre>"""
 
-    def _create_shortcuts_tab(self) -> QWidget:
-        widget = QWidget()
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setSpacing(20)
-
-        shortcuts = """\
-<h2>Keyboard Shortcuts</h2>
-
+    def _shortcuts_modes(self) -> str:
+        return """\
 <h3>Modes</h3>
-<table cellpadding="8">
+<table>
   <tr><td><b>S</b></td><td>Select mode</td></tr>
   <tr><td><b>N</b></td><td>Add node mode</td></tr>
   <tr><td><b>E</b></td><td>Add edge mode</td></tr>
   <tr><td><b>D</b></td><td>Delete mode</td></tr>
-</table>
+</table>"""
 
+    def _shortcuts_view(self) -> str:
+        return """\
 <h3>View</h3>
-<table cellpadding="8">
+<table>
   <tr><td><b>F</b></td><td>Fit view</td></tr>
   <tr><td><b>Ctrl++</b></td><td>Zoom in</td></tr>
   <tr><td><b>Ctrl+-</b></td><td>Zoom out</td></tr>
   <tr><td><b>Mouse wheel</b></td><td>Zoom in/out</td></tr>
   <tr><td><b>Middle drag</b></td><td>Pan view</td></tr>
-</table>
+</table>"""
 
+    def _shortcuts_edit(self) -> str:
+        return """\
 <h3>Edit</h3>
-<table cellpadding="8">
+<table>
   <tr><td><b>Ctrl+Z</b></td><td>Undo</td></tr>
   <tr><td><b>Ctrl+Y</b></td><td>Redo</td></tr>
   <tr><td><b>Delete</b></td><td>Delete selected</td></tr>
   <tr><td><b>Ctrl+click</b></td><td>Add to selection</td></tr>
-</table>
+</table>"""
 
+    def _shortcuts_file(self) -> str:
+        return """\
 <h3>File</h3>
-<table cellpadding="8">
+<table>
   <tr><td><b>Ctrl+N</b></td><td>New graph</td></tr>
   <tr><td><b>Ctrl+O</b></td><td>Open graph</td></tr>
   <tr><td><b>Ctrl+S</b></td><td>Save graph</td></tr>
+  <tr><td><b>Ctrl+Shift+S</b></td><td>Save as…</td></tr>
   <tr><td><b>Ctrl+Q</b></td><td>Quit</td></tr>
-</table>
-"""
-        label = QLabel(shortcuts)
-        label.setWordWrap(True)
-        label.setTextFormat(Qt.TextFormat.RichText)
-        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(label)
-        layout.addStretch()
-
-        scroll.setWidget(content)
-        widget.setLayout(QVBoxLayout())
-        widget.layout().addWidget(scroll)
-        return widget
+</table>"""
