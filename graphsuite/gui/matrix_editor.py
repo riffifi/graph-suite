@@ -1,4 +1,4 @@
-"""Adjacency-matrix editor – QTableWidget synced with the Graph model."""
+"""Adjacency and Incidence matrix editor – QTableWidget synced with the Graph model."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QLabel,
-    QInputDialog, QAbstractItemView,
+    QInputDialog, QAbstractItemView, QTabWidget,
 )
 
 from graphsuite.core.graph import Graph, GraphEvent
@@ -16,7 +16,7 @@ from graphsuite.gui.style import Colors
 
 
 class MatrixEditor(QWidget):
-    """Editable adjacency-matrix view of the graph."""
+    """Editable adjacency and incidence matrix view of the graph."""
 
     def __init__(self, graph: Graph, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -34,10 +34,17 @@ class MatrixEditor(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
-        # button row
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(4)
+        # Tab widget for adjacency and incidence matrices
+        self._tabs = QTabWidget()
 
+        # === Adjacency Matrix Tab ===
+        adj_widget = QWidget()
+        adj_layout = QVBoxLayout(adj_widget)
+        adj_layout.setContentsMargins(4, 4, 4, 4)
+        adj_layout.setSpacing(4)
+
+        # button row for adjacency
+        adj_btn_row = QHBoxLayout()
         self._btn_add = QPushButton("+ Node")
         self._btn_add.setToolTip("Add a new node")
         self._btn_add.clicked.connect(self._add_node)
@@ -54,41 +61,82 @@ class MatrixEditor(QWidget):
         self._btn_refresh.setToolTip("Reload matrix from graph")
         self._btn_refresh.clicked.connect(self._refresh)
 
-        btn_row.addWidget(self._btn_add)
-        btn_row.addWidget(self._btn_remove)
-        btn_row.addStretch()
-        btn_row.addWidget(self._btn_apply)
-        btn_row.addWidget(self._btn_refresh)
-        layout.addLayout(btn_row)
+        adj_btn_row.addWidget(self._btn_add)
+        adj_btn_row.addWidget(self._btn_remove)
+        adj_btn_row.addStretch()
+        adj_btn_row.addWidget(self._btn_apply)
+        adj_btn_row.addWidget(self._btn_refresh)
+        adj_layout.addLayout(adj_btn_row)
 
-        # info label
+        # info label for adjacency
         self._info = QLabel()
         self._info.setStyleSheet(f"color: {Colors.TEXT_DIM}; font-size: 11px;")
-        layout.addWidget(self._info)
+        adj_layout.addWidget(self._info)
 
-        # table
-        self._table = QTableWidget()
-        self._table.setSelectionMode(
+        # adjacency table
+        self._adj_table = QTableWidget()
+        self._adj_table.setSelectionMode(
             QAbstractItemView.SelectionMode.SingleSelection)
-        self._table.horizontalHeader().setSectionResizeMode(
+        self._adj_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch)
-        self._table.verticalHeader().setSectionResizeMode(
+        self._adj_table.verticalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch)
-        self._table.cellChanged.connect(self._on_cell_changed)
-        layout.addWidget(self._table)
+        self._adj_table.cellChanged.connect(self._on_cell_changed)
+        adj_layout.addWidget(self._adj_table)
+
+        self._tabs.addTab(adj_widget, "Adjacency Matrix")
+
+        # === Incidence Matrix Tab ===
+        inc_widget = QWidget()
+        inc_layout = QVBoxLayout(inc_widget)
+        inc_layout.setContentsMargins(4, 4, 4, 4)
+        inc_layout.setSpacing(4)
+
+        # button row for incidence
+        inc_btn_row = QHBoxLayout()
+        self._btn_inc_refresh = QPushButton("Refresh")
+        self._btn_inc_refresh.setToolTip("Reload incidence matrix from graph")
+        self._btn_inc_refresh.clicked.connect(self._refresh_incidence)
+        inc_btn_row.addWidget(self._btn_inc_refresh)
+        inc_btn_row.addStretch()
+        inc_layout.addLayout(inc_btn_row)
+
+        # info label for incidence
+        self._inc_info = QLabel()
+        self._inc_info.setStyleSheet(f"color: {Colors.TEXT_DIM}; font-size: 11px;")
+        inc_layout.addWidget(self._inc_info)
+
+        # incidence table (read-only)
+        self._inc_table = QTableWidget()
+        self._inc_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection)
+        self._inc_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch)
+        self._inc_table.verticalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch)
+        self._inc_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        inc_layout.addWidget(self._inc_table)
+
+        self._tabs.addTab(inc_widget, "Incidence Matrix")
+
+        layout.addWidget(self._tabs)
 
     # -- refresh from model ------------------------------------------------
 
     def _refresh(self) -> None:
+        self._refresh_adjacency()
+        self._refresh_incidence()
+
+    def _refresh_adjacency(self) -> None:
         self._updating = True
         try:
             mat, names = self.graph.get_adjacency_matrix()
             n = len(names)
 
-            self._table.setRowCount(n)
-            self._table.setColumnCount(n)
-            self._table.setHorizontalHeaderLabels(names)
-            self._table.setVerticalHeaderLabels(names)
+            self._adj_table.setRowCount(n)
+            self._adj_table.setColumnCount(n)
+            self._adj_table.setHorizontalHeaderLabels(names)
+            self._adj_table.setVerticalHeaderLabels(names)
 
             for i in range(n):
                 for j in range(n):
@@ -101,7 +149,7 @@ class MatrixEditor(QWidget):
                         item.setForeground(QColor(Colors.SECONDARY))
                     else:
                         item.setForeground(QColor(Colors.TEXT_DIM))
-                    self._table.setItem(i, j, item)
+                    self._adj_table.setItem(i, j, item)
 
             dtype = "Directed" if self.graph.directed else "Undirected"
             wtype = "Weighted" if self.graph.weighted else "Unweighted"
@@ -109,6 +157,84 @@ class MatrixEditor(QWidget):
                 f"{dtype} · {wtype} · {n} nodes · {len(self.graph.edges)} edges")
         finally:
             self._updating = False
+
+    def _refresh_incidence(self) -> None:
+        """Refresh the incidence matrix view.
+        
+        Incidence matrix: rows = nodes, columns = edges.
+        Values: 1 = edge starts at node, -1 = edge ends at node (directed),
+                2 = edge is incident to node (undirected self-loop),
+                1 = edge incident to node (undirected).
+        """
+        names = list(self.graph.nodes.keys())
+        edges = list(self.graph.edges)
+        n_nodes = len(names)
+        n_edges = len(edges)
+
+        self._inc_table.setRowCount(n_nodes)
+        self._inc_table.setColumnCount(max(1, n_edges))
+
+        # Row labels = node names
+        self._inc_table.setVerticalHeaderLabels(names)
+
+        # Column labels = edge names (source-target)
+        edge_labels = [f"{e.source}→{e.target}" if self.graph.directed
+                       else f"{e.source}--{e.target}" for e in edges]
+        if not edge_labels:
+            edge_labels = ["(no edges)"]
+        self._inc_table.setHorizontalHeaderLabels(edge_labels)
+
+        # Build incidence matrix
+        node_idx = {name: i for i, name in enumerate(names)}
+        for j, edge in enumerate(edges):
+            src_idx = node_idx.get(edge.source)
+            tgt_idx = node_idx.get(edge.target)
+
+            # Clear column first
+            for i in range(n_nodes):
+                item = QTableWidgetItem("0")
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                item.setForeground(QColor(Colors.TEXT_DIM))
+                self._inc_table.setItem(i, j, item)
+
+            if src_idx is not None and tgt_idx is not None:
+                if self.graph.directed:
+                    # Directed: 1 at source, -1 at target
+                    src_item = QTableWidgetItem("1")
+                    src_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    src_item.setForeground(QColor(Colors.PRIMARY))
+                    self._inc_table.setItem(src_idx, j, src_item)
+
+                    if edge.source != edge.target:  # not a self-loop
+                        tgt_item = QTableWidgetItem("-1")
+                        tgt_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        tgt_item.setForeground(QColor(Colors.ERROR))
+                        self._inc_table.setItem(tgt_idx, j, tgt_item)
+                    else:  # self-loop in directed graph
+                        src_item = QTableWidgetItem("0")
+                        src_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        self._inc_table.setItem(src_idx, j, src_item)
+                else:
+                    # Undirected: 1 at both endpoints
+                    if edge.source != edge.target:
+                        src_item = QTableWidgetItem("1")
+                        src_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        src_item.setForeground(QColor(Colors.PRIMARY))
+                        self._inc_table.setItem(src_idx, j, src_item)
+
+                        tgt_item = QTableWidgetItem("1")
+                        tgt_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        tgt_item.setForeground(QColor(Colors.PRIMARY))
+                        self._inc_table.setItem(tgt_idx, j, tgt_item)
+                    else:  # self-loop in undirected graph
+                        src_item = QTableWidgetItem("2")
+                        src_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        src_item.setForeground(QColor(Colors.WARNING))
+                        self._inc_table.setItem(src_idx, j, src_item)
+
+        dtype = "Directed" if self.graph.directed else "Undirected"
+        self._inc_info.setText(
+            f"{dtype} · {n_nodes} nodes × {n_edges} edges")
 
     # -- graph events ------------------------------------------------------
 
@@ -127,7 +253,7 @@ class MatrixEditor(QWidget):
     def _on_cell_changed(self, row: int, col: int) -> None:
         if self._updating:
             return
-        item = self._table.item(row, col)
+        item = self._adj_table.item(row, col)
         if item is None:
             return
         names = self.graph.node_names
@@ -136,7 +262,7 @@ class MatrixEditor(QWidget):
         try:
             val = float(item.text())
         except ValueError:
-            self._refresh()
+            self._refresh_adjacency()
             return
 
         src, tgt = names[row], names[col]
@@ -156,7 +282,7 @@ class MatrixEditor(QWidget):
         finally:
             self._updating = False
 
-        self._refresh()
+        self._refresh_adjacency()
 
     # -- button handlers ---------------------------------------------------
 
@@ -174,7 +300,7 @@ class MatrixEditor(QWidget):
             self.graph.remove_node(names[idx])
 
     def _apply_matrix(self) -> None:
-        """Read the full table and rebuild the graph."""
+        """Read the full adjacency table and rebuild the graph."""
         names = self.graph.node_names
         n = len(names)
         if n == 0:
@@ -182,7 +308,7 @@ class MatrixEditor(QWidget):
         mat = np.zeros((n, n), dtype=float)
         for i in range(n):
             for j in range(n):
-                item = self._table.item(i, j)
+                item = self._adj_table.item(i, j)
                 if item:
                     try:
                         mat[i][j] = float(item.text())

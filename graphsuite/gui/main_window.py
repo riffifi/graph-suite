@@ -10,7 +10,7 @@ from PySide6.QtGui import QAction, QKeySequence, QIcon, QPixmap, QPainter, QColo
 from PySide6.QtWidgets import (
     QMainWindow, QToolBar, QDockWidget, QFileDialog,
     QMessageBox, QStatusBar, QToolButton, QWidget,
-    QLabel,
+    QLabel, QDialog, QVBoxLayout, QTextEdit,
 )
 
 from graphsuite.core.graph import Graph, GraphEvent
@@ -196,6 +196,29 @@ class MainWindow(QMainWindow):
 
         tb.addSeparator()
 
+        # Zoom controls
+        act_zoom_in = QAction("Zoom +", self)
+        act_zoom_in.setToolTip("Zoom in (Ctrl++))")
+        act_zoom_in.setShortcut(QKeySequence("Ctrl++"))
+        act_zoom_in.triggered.connect(self._zoom_in)
+        tb.addAction(act_zoom_in)
+
+        act_zoom_out = QAction("Zoom -", self)
+        act_zoom_out.setToolTip("Zoom out (Ctrl+-))")
+        act_zoom_out.setShortcut(QKeySequence("Ctrl+-"))
+        act_zoom_out.triggered.connect(self._zoom_out)
+        tb.addAction(act_zoom_out)
+
+        tb.addSeparator()
+
+        # Clear everything
+        act_clear = QAction("Clear All", self)
+        act_clear.setToolTip("Clear entire graph")
+        act_clear.triggered.connect(self._clear_graph)
+        tb.addAction(act_clear)
+
+        tb.addSeparator()
+
         # Undo / Redo
         act_undo = QAction("Undo", self)
         act_undo.setShortcut(QKeySequence("Ctrl+Z"))
@@ -299,6 +322,14 @@ class MainWindow(QMainWindow):
             width=self.canvas.width(), height=self.canvas.height())
         self.canvas.fit_view()
 
+    def _zoom_in(self) -> None:
+        self.canvas._zoom = min(5.0, self.canvas._zoom * 1.2)
+        self.canvas.update()
+
+    def _zoom_out(self) -> None:
+        self.canvas._zoom = max(0.1, self.canvas._zoom / 1.2)
+        self.canvas.update()
+
     def _clear_graph(self) -> None:
         if len(self.graph.nodes) == 0:
             return
@@ -381,26 +412,96 @@ class MainWindow(QMainWindow):
             "</ul>")
 
     def _dsl_help(self) -> None:
-        QMessageBox.information(
-            self, "DSL Reference",
-            "<h3>Graph DSL Commands</h3>"
-            "<pre>"
-            "set directed true|false\n"
-            "set weighted true|false\n\n"
-            "node &lt;name&gt; [at &lt;x&gt; &lt;y&gt;]\n"
-            "edge &lt;src&gt; -&gt; &lt;tgt&gt; [weight &lt;w&gt;]\n"
-            "edge &lt;src&gt; -- &lt;tgt&gt; [weight &lt;w&gt;]\n\n"
-            "delete node &lt;name&gt;\n"
-            "delete edge &lt;src&gt; &lt;tgt&gt;\n"
-            "rename &lt;old&gt; &lt;new&gt;\n"
-            "color &lt;node&gt; #rrggbb\n\n"
-            "run bfs|dfs from &lt;src&gt;\n"
-            "run dijkstra from &lt;src&gt; to &lt;tgt&gt;\n"
-            "run bellman from &lt;src&gt; to &lt;tgt&gt;\n"
-            "run mst | topo | components | scc\n"
-            "run cycle | info\n\n"
-            "layout circle | spring\n"
-            "clear\n"
-            "fit\n"
-            "</pre>"
-            "<p><i># comments start with hash</i></p>")
+        """Show comprehensive DSL reference dialog."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("DSL Reference")
+        dialog.setMinimumSize(700, 550)
+        
+        layout = QVBoxLayout(dialog)
+        
+        text = QTextEdit()
+        text.setReadOnly(True)
+        text.setFont(self.font())
+        
+        reference = """\
+<h2>Graph DSL Reference</h2>
+<p>The DSL (Domain Specific Language) allows you to script graph operations.</p>
+
+<h3>Comments</h3>
+<pre># This is a comment - lines starting with # are ignored</pre>
+
+<h3>Graph Settings</h3>
+<pre>set directed true      # Make graph directed (default)
+set directed false     # Make graph undirected
+set weighted true      # Enable edge weights
+set weighted false     # Disable edge weights (default)</pre>
+
+<h3>Node Operations</h3>
+<pre>node A                 # Add node named 'A' at default position
+node B at 100 200      # Add node 'B' at coordinates (100, 200)
+delete node A          # Remove node 'A' and its edges
+rename A B             # Rename node 'A' to 'B'
+color A #ff0000        # Set node 'A' color to red (#rrggbb)</pre>
+
+<h3>Edge Operations</h3>
+<pre>edge A -> B            # Add directed edge A to B
+edge A -- B            # Add undirected edge between A and B
+edge A -> B weight 5   # Add directed edge with weight 5
+edge A <-> B           # Add bidirectional edges (both directions)
+delete edge A B        # Remove edge from A to B</pre>
+
+<h3>Algorithms</h3>
+<pre>run bfs from A         # BFS traversal starting from A
+run dfs from A         # DFS traversal starting from A
+run dijkstra from A to B    # Shortest path A→B (Dijkstra)
+run bellman from A to B     # Shortest path A→B (Bellman-Ford)
+run mst                # Minimum Spanning Tree (undirected only)
+run topo               # Topological sort (directed acyclic)
+run components         # Connected components
+run scc                # Strongly connected components (directed)
+run cycle              # Detect and show cycles
+run info               # Display graph statistics
+run centrality         # Calculate degree centrality</pre>
+
+<h3>Layout & View</h3>
+<pre>layout circle          # Arrange nodes in a circle
+layout spring          # Force-directed spring layout
+clear                  # Remove all nodes and edges
+fit                    # Fit all nodes in view</pre>
+
+<h3>Example Script</h3>
+<pre># Create a weighted directed graph
+set directed true
+set weighted true
+
+node A at 100 100
+node B at 300 100
+node C at 200 250
+
+edge A -> B weight 4
+edge B -> C weight 2
+edge A -> C weight 7
+
+run dijkstra from A to C
+layout spring</pre>
+
+<h3>Keyboard Shortcuts</h3>
+<ul>
+  <li><b>S</b> - Select mode</li>
+  <li><b>N</b> - Add node mode</li>
+  <li><b>E</b> - Add edge mode</li>
+  <li><b>D</b> - Delete mode</li>
+  <li><b>F</b> - Fit view</li>
+  <li><b>Delete/Backspace</b> - Delete selected</li>
+  <li><b>Ctrl+Z</b> - Undo</li>
+  <li><b>Ctrl+Y</b> - Redo</li>
+  <li><b>Ctrl++</b> - Zoom in</li>
+  <li><b>Ctrl+-</b> - Zoom out</li>
+  <li><b>Middle mouse drag</b> - Pan view</li>
+  <li><b>Mouse wheel</b> - Zoom in/out</li>
+</ul>
+"""
+        text.setHtml(reference)
+        layout.addWidget(text)
+        
+        dialog.exec()

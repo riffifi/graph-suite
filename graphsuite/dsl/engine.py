@@ -53,6 +53,7 @@ class TT(Enum):
     NUMBER = auto()
     ARROW = auto()       # ->
     DASH = auto()        # --
+    BIDIARROW = auto()   # <->
     HASH_COLOR = auto()  # #rrggbb
     NEWLINE = auto()
     EOF = auto()
@@ -81,6 +82,7 @@ KEYWORDS = {
 
 _TOKEN_RE = re.compile(r"""
     (?P<comment>\#[^\n]*)        |
+    (?P<bidiarrow><->)           |
     (?P<arrow>->)                |
     (?P<dash>--)                 |
     (?P<hexcolor>\#[0-9a-fA-F]{6})\b |
@@ -105,7 +107,9 @@ def tokenize(source: str) -> list[Token]:
             lineno += 1
             tokens.append(Token(TT.NEWLINE, "\\n", lineno))
             continue
-        if kind == "arrow":
+        if kind == "bidiarrow":
+            tokens.append(Token(TT.BIDIARROW, "<->", lineno))
+        elif kind == "arrow":
             tokens.append(Token(TT.ARROW, "->", lineno))
         elif kind == "dash":
             tokens.append(Token(TT.DASH, "--", lineno))
@@ -226,9 +230,20 @@ class Parser:
     def _parse_edge(self) -> Command:
         t = self._advance()  # edge
         src = self._read_name()
-        # -> or --
+        # -> or -- or <->
         arrow = self._advance()
-        directed = arrow.type == TT.ARROW
+        if arrow.type == TT.ARROW:
+            directed = True
+            bidirectional = False
+        elif arrow.type == TT.DASH:
+            directed = False
+            bidirectional = False
+        elif arrow.type == TT.BIDIARROW:
+            directed = True
+            bidirectional = True
+        else:
+            directed = True
+            bidirectional = False
         tgt = self._read_name()
         weight = None
         if self._peek().value.lower() == "weight":
@@ -236,7 +251,9 @@ class Parser:
             weight = float(self._advance().value)
         return Command("edge", {
             "src": src, "tgt": tgt,
-            "directed": directed, "weight": weight,
+            "directed": directed,
+            "bidirectional": bidirectional,
+            "weight": weight,
         }, t.line)
 
     def _parse_delete(self) -> Command:
@@ -348,15 +365,27 @@ class Interpreter:
 
     def _cmd_edge(self, args: dict) -> None:
         w = args["weight"] if args["weight"] is not None else 1.0
-        edge = self.graph.add_edge(args["src"], args["tgt"], weight=w)
+        src, tgt = args["src"], args["tgt"]
+        bidirectional = args.get("bidirectional", False)
+        
+        # Add the primary edge
+        edge = self.graph.add_edge(src, tgt, weight=w)
         if edge:
-            arrow = "->" if args["directed"] else "--"
-            self._output_lines.append(
-                f"+ edge {edge.source} {arrow} {edge.target}"
-                + (f" weight={edge.weight}" if self.graph.weighted else ""))
+            if bidirectional:
+                # Also add the reverse edge for bidirectional
+                self.graph.add_edge(tgt, src, weight=w)
+                arrow = "<->"
+                self._output_lines.append(
+                    f"+ bidirectional edges {src} {arrow} {tgt}"
+                    + (f" weight={w}" if self.graph.weighted else ""))
+            else:
+                arrow = "->" if args["directed"] else "--"
+                self._output_lines.append(
+                    f"+ edge {edge.source} {arrow} {edge.target}"
+                    + (f" weight={edge.weight}" if self.graph.weighted else ""))
         else:
             self._output_lines.append(
-                f"Could not add edge {args['src']} → {args['tgt']} "
+                f"Could not add edge {src} → {tgt} "
                 f"(nodes exist?)")
 
     def _cmd_delete_node(self, args: dict) -> None:
@@ -526,7 +555,7 @@ class DSLHighlighter(QSyntaxHighlighter):
         arrow_fmt = QTextCharFormat()
         arrow_fmt.setForeground(QColor(Colors.SECONDARY))
         arrow_fmt.setFontWeight(QFont.Weight.Bold)
-        self._rules.append((re.compile(r"->|--"), arrow_fmt))
+        self._rules.append((re.compile(r"<->|->|--"), arrow_fmt))
 
         # hex colours
         hex_fmt = QTextCharFormat()

@@ -265,9 +265,9 @@ class GraphCanvas(QWidget):
                  else edge.color)
         width = 3 if (is_selected or is_highlighted) else 2
 
-        # Check for bidirectional edges → offset
+        # Check for bidirectional edges → draw double arrowhead on single line
         has_reverse = self.graph.has_edge(edge.target, edge.source)
-        offset = 6 if (has_reverse and self.graph.directed) else 0
+        is_bidirectional = has_reverse and self.graph.directed
 
         sx, sy = src.x, src.y
         tx, ty = tgt.x, tgt.y
@@ -276,14 +276,10 @@ class GraphCanvas(QWidget):
         if length == 0:
             return
 
-        # unit normal for offset
+        # unit normal for weight label offset
         nx_, ny_ = -dy / length, dx / length
-        sx += nx_ * offset
-        sy += ny_ * offset
-        tx += nx_ * offset
-        ty += ny_ * offset
 
-        # Shorten to node borders
+        # Shorten to node borders (no offset for bidirectional - single line)
         ux, uy = dx / length, dy / length
         sx2 = sx + ux * src.radius
         sy2 = sy + uy * src.radius
@@ -294,21 +290,27 @@ class GraphCanvas(QWidget):
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawLine(QPointF(sx2, sy2), QPointF(tx2, ty2))
 
-        # arrowhead for directed
+        # arrowhead(s) for directed
         if self.graph.directed:
+            # Always draw arrowhead at target end
             self._draw_arrowhead(p, sx2, sy2, tx2, ty2, color, width)
+            # For bidirectional, also draw arrowhead at source end
+            if is_bidirectional:
+                self._draw_arrowhead(p, tx2, ty2, sx2, sy2, color, width)
 
-        # weight label
+        # weight label (only draw once for bidirectional pairs)
         if self.graph.weighted:
-            mx = (sx2 + tx2) / 2 + nx_ * 12
-            my = (sy2 + ty2) / 2 + ny_ * 12
-            font = QFont("sans-serif", 10)
-            font.setBold(True)
-            p.setFont(font)
-            p.setPen(QPen(QColor(Colors.EDGE_WEIGHT)))
-            w_text = (f"{edge.weight:g}" if edge.weight == int(edge.weight)
-                      else f"{edge.weight:.2f}")
-            p.drawText(QPointF(mx - 10, my + 4), w_text)
+            # Only draw weight on the edge where source < target (alphabetically)
+            if not is_bidirectional or edge.source < edge.target:
+                mx = (sx2 + tx2) / 2 + nx_ * 12
+                my = (sy2 + ty2) / 2 + ny_ * 12
+                font = QFont("sans-serif", 10)
+                font.setBold(True)
+                p.setFont(font)
+                p.setPen(QPen(QColor(Colors.EDGE_WEIGHT)))
+                w_text = (f"{edge.weight:g}" if edge.weight == int(edge.weight)
+                          else f"{edge.weight:.2f}")
+                p.drawText(QPointF(mx - 10, my + 4), w_text)
 
     def _draw_arrowhead(self, p: QPainter, sx: float, sy: float,
                         tx: float, ty: float,
