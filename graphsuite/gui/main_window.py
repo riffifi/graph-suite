@@ -10,8 +10,8 @@ from PySide6.QtGui import QAction, QKeySequence, QIcon, QPixmap, QPainter, QColo
 from PySide6.QtWidgets import (
     QMainWindow, QToolBar, QDockWidget, QFileDialog,
     QMessageBox, QStatusBar, QToolButton, QWidget,
-    QLabel, QDialog, QVBoxLayout, QTextEdit, QTabWidget,
-    QScrollArea, QFrame,
+    QLabel, QDialog, QVBoxLayout, QHBoxLayout, QTextEdit, QTabWidget,
+    QScrollArea, QFrame, QPushButton,
 )
 
 from graphsuite.core.graph import Graph, GraphEvent
