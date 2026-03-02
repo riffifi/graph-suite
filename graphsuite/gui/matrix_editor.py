@@ -8,7 +8,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QLabel,
-    QInputDialog, QAbstractItemView, QTabWidget,
+    QInputDialog, QAbstractItemView, QTabWidget, QGroupBox,
 )
 
 from graphsuite.core.graph import Graph, GraphEvent
@@ -34,8 +34,17 @@ class MatrixEditor(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
+        # Group box for the whole matrix editor
+        group = QGroupBox()
+        group_layout = QVBoxLayout(group)
+        group_layout.setContentsMargins(4, 4, 4, 4)
+        group_layout.setSpacing(4)
+
         # Tab widget for adjacency and incidence matrices
         self._tabs = QTabWidget()
+        group_layout.addWidget(self._tabs)
+
+        layout.addWidget(group)
 
         # === Adjacency Matrix Tab ===
         adj_widget = QWidget()
@@ -119,8 +128,6 @@ class MatrixEditor(QWidget):
 
         self._tabs.addTab(inc_widget, "Incidence Matrix")
 
-        layout.addWidget(self._tabs)
-
     # -- refresh from model ------------------------------------------------
 
     def _refresh(self) -> None:
@@ -138,9 +145,24 @@ class MatrixEditor(QWidget):
             self._adj_table.setHorizontalHeaderLabels(names)
             self._adj_table.setVerticalHeaderLabels(names)
 
+            # Build a lookup for bidirectional edges
+            bidi_edges = {}
+            for e in self.graph.edges:
+                if e.bidirectional:
+                    bidi_edges[(e.source, e.target)] = e.weight
+
             for i in range(n):
                 for j in range(n):
                     val = mat[i][j]
+                    
+                    # Check if there's a bidirectional edge in reverse direction
+                    # If so, show its weight in this cell too
+                    if val == 0 and self.graph.directed:
+                        src, tgt = names[i], names[j]
+                        # Check if tgt→src is bidirectional (show in src→tgt cell)
+                        if (tgt, src) in bidi_edges:
+                            val = bidi_edges[(tgt, src)]
+                    
                     item = QTableWidgetItem(
                         f"{val:g}" if val != 0 else "0")
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -153,8 +175,10 @@ class MatrixEditor(QWidget):
 
             dtype = "Directed" if self.graph.directed else "Undirected"
             wtype = "Weighted" if self.graph.weighted else "Unweighted"
+            bidi_count = sum(1 for e in self.graph.edges if e.bidirectional)
+            bidi_text = f" · {bidi_count} bidirectional" if bidi_count > 0 else ""
             self._info.setText(
-                f"{dtype} · {wtype} · {n} nodes · {len(self.graph.edges)} edges")
+                f"{dtype} · {wtype} · {n} nodes · {len(self.graph.edges)} edges{bidi_text}")
         finally:
             self._updating = False
 
@@ -178,8 +202,16 @@ class MatrixEditor(QWidget):
         self._inc_table.setVerticalHeaderLabels(names)
 
         # Column labels = edge names (source-target)
-        edge_labels = [f"{e.source}→{e.target}" if self.graph.directed
-                       else f"{e.source}--{e.target}" for e in edges]
+        # Add bidirectional indicator (↔) for bidirectional edges
+        edge_labels = []
+        for e in edges:
+            if self.graph.directed:
+                if e.bidirectional:
+                    edge_labels.append(f"{e.source}↔{e.target}")
+                else:
+                    edge_labels.append(f"{e.source}→{e.target}")
+            else:
+                edge_labels.append(f"{e.source}--{e.target}")
         if not edge_labels:
             edge_labels = ["(no edges)"]
         self._inc_table.setHorizontalHeaderLabels(edge_labels)
@@ -270,14 +302,39 @@ class MatrixEditor(QWidget):
         self._updating = True
         try:
             if val == 0:
-                self.graph.remove_edge(src, tgt)
+                # Check if we're clearing a bidirectional edge's mirror cell
+                # If so, just make it unidirectional instead of removing
+                reverse_edge = self.graph.get_edge(tgt, src)
+                if reverse_edge and reverse_edge.bidirectional:
+                    self.graph.toggle_edge_bidirectional(tgt, src, reverse_edge.edge_id)
+                else:
+                    self.graph.remove_edge(src, tgt)
             else:
                 existing = self.graph.get_edge(src, tgt)
                 if existing is None and not self.graph.directed:
                     existing = self.graph.get_edge(tgt, src)
+
                 if existing:
+                    # Edge exists - just update weight
                     self.graph.set_edge_weight(src, tgt, val)
                 else:
+                    # No edge exists - check if we should create bidirectional
+                    if self.graph.directed:
+                        # Check if reverse edge exists and is bidirectional
+                        reverse_edge = self.graph.get_edge(tgt, src)
+                        if reverse_edge and reverse_edge.bidirectional:
+                            # Reverse edge is bidirectional - just update its weight
+                            self.graph.set_edge_weight(tgt, src, val, reverse_edge.edge_id)
+                            self._refresh_adjacency()
+                            return
+                        elif reverse_edge and not reverse_edge.bidirectional:
+                            # Reverse edge exists but not bidirectional - make it bidirectional
+                            self.graph.toggle_edge_bidirectional(tgt, src, reverse_edge.edge_id)
+                            self.graph.set_edge_weight(tgt, src, val, reverse_edge.edge_id)
+                            self._refresh_adjacency()
+                            return
+
+                    # Create new edge normally
                     self.graph.add_edge(src, tgt, weight=val)
         finally:
             self._updating = False
@@ -292,9 +349,20 @@ class MatrixEditor(QWidget):
             self.graph.add_node(name=name, x=200, y=200)
 
     def _remove_node(self) -> None:
-        col = self._table.currentColumn()
-        row = self._table.currentRow()
-        idx = col if col >= 0 else row
+        # Get selected cell in adjacency matrix
+        # Both row and column headers represent the same node in adjacency matrix
+        selected_items = self._adj_table.selectedItems()
+        
+        if selected_items:
+            # Get the row of the first selected item
+            item = selected_items[0]
+            idx = item.row()
+        else:
+            # Fallback to current column/row
+            col = self._adj_table.currentColumn()
+            row = self._adj_table.currentRow()
+            idx = col if col >= 0 else row
+        
         names = self.graph.node_names
         if 0 <= idx < len(names):
             self.graph.remove_node(names[idx])

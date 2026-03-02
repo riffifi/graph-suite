@@ -9,6 +9,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Callable, Optional
+import uuid
 
 import networkx as nx
 import numpy as np
@@ -37,6 +38,9 @@ class Edge:
     target: str
     weight: float = 1.0
     color: str = "#90a4ae"
+    edge_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    curvature: float = 0.0  # User-defined curvature (positive = left, negative = right)
+    bidirectional: bool = False  # If True, shows arrowheads at both ends
 
     @property
     def key(self) -> tuple[str, str]:
@@ -44,11 +48,20 @@ class Edge:
 
     def to_dict(self) -> dict:
         return {"source": self.source, "target": self.target,
-                "weight": self.weight, "color": self.color}
+                "weight": self.weight, "color": self.color,
+                "edge_id": self.edge_id, "curvature": self.curvature,
+                "bidirectional": self.bidirectional}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Edge":
-        return cls(**d)
+        edge_id = d.pop("edge_id", str(uuid.uuid4())[:8])
+        curvature = d.pop("curvature", 0.0)
+        bidirectional = d.pop("bidirectional", False)
+        edge = cls(**d)
+        edge.edge_id = edge_id
+        edge.curvature = curvature
+        edge.bidirectional = bidirectional
+        return edge
 
 
 class GraphEvent(Enum):
@@ -216,56 +229,163 @@ class Graph:
 
     # -- edge operations ---------------------------------------------------
 
-    def get_edge(self, src: str, tgt: str) -> Edge | None:
+    def get_edge(self, src: str, tgt: str, edge_id: str | None = None) -> Edge | None:
+        """Get edge between src and tgt. If edge_id is provided, get specific edge."""
         for e in self._edges:
             if e.source == src and e.target == tgt:
+                if edge_id is None or e.edge_id == edge_id:
+                    return e
+        return None
+
+    def get_edge_by_id(self, edge_id: str) -> Edge | None:
+        """Get edge by its unique ID."""
+        for e in self._edges:
+            if e.edge_id == edge_id:
                 return e
         return None
 
-    def has_edge(self, src: str, tgt: str) -> bool:
-        return self.get_edge(src, tgt) is not None
+    def has_edge(self, src: str, tgt: str, edge_id: str | None = None) -> bool:
+        """Check if edge exists. If edge_id is provided, check for specific edge."""
+        return self.get_edge(src, tgt, edge_id) is not None
+
+    def get_edges_between(self, src: str, tgt: str) -> list[Edge]:
+        """Get all parallel edges between src and tgt."""
+        return [e for e in self._edges if e.source == src and e.target == tgt]
 
     def add_edge(self, source: str, target: str, weight: float = 1.0,
-                 record_undo: bool = True) -> Edge | None:
+                 edge_id: str | None = None, record_undo: bool = True) -> Edge | None:
+        """Add edge between source and target. Allows parallel edges."""
         if source not in self._nodes or target not in self._nodes:
             return None
-        if self.has_edge(source, target):
-            return self.get_edge(source, target)
-        if not self._directed and self.has_edge(target, source):
-            return self.get_edge(target, source)
         if record_undo:
             self._save_undo()
         edge = Edge(source=source, target=target,
-                    weight=weight if self._weighted else 1.0)
+                    weight=weight if self._weighted else 1.0,
+                    edge_id=edge_id or str(uuid.uuid4())[:8])
         self._edges.append(edge)
         self._notify(GraphEvent.EDGE_ADDED, edge=edge)
         return edge
 
     def remove_edge(self, source: str, target: str,
+                    edge_id: str | None = None,
                     record_undo: bool = True) -> None:
+        """Remove edge(s) between source and target. If edge_id provided, remove specific edge."""
         before = len(self._edges)
-        self._edges = [e for e in self._edges
-                       if not (e.source == source and e.target == target)]
-        if not self._directed:
+        if edge_id is not None:
             self._edges = [e for e in self._edges
-                           if not (e.source == target and e.target == source)]
+                           if not (e.source == source and e.target == target and e.edge_id == edge_id)]
+        else:
+            self._edges = [e for e in self._edges
+                           if not (e.source == source and e.target == target)]
+            if not self._directed:
+                self._edges = [e for e in self._edges
+                               if not (e.source == target and e.target == source)]
         if len(self._edges) < before:
             if record_undo:
                 self._save_undo()
             self._notify(GraphEvent.EDGE_REMOVED,
-                         source=source, target=target)
+                         source=source, target=target, edge_id=edge_id)
 
-    def set_edge_weight(self, source: str, target: str, weight: float) -> None:
-        edge = self.get_edge(source, target)
+    def remove_edge_by_id(self, edge_id: str, record_undo: bool = True) -> None:
+        """Remove a specific edge by its ID."""
+        edge = self.get_edge_by_id(edge_id)
+        if edge is not None:
+            self.remove_edge(edge.source, edge.target, edge_id=edge_id, record_undo=record_undo)
+
+    def set_edge_weight(self, source: str, target: str, weight: float,
+                        edge_id: str | None = None) -> None:
+        """Set weight of edge. If edge_id provided, set weight of specific edge."""
+        edge = self.get_edge(source, target, edge_id)
+        # For directed graphs, also check reverse direction if edge_id is provided
+        # (handles bidirectional edge weight updates from either direction)
+        if edge is None and edge_id is not None and self._directed:
+            edge = self.get_edge(target, source, edge_id)
         if edge is None and not self._directed:
-            edge = self.get_edge(target, source)
+            edge = self.get_edge(target, source, edge_id)
         if edge is not None:
             self._save_undo()
             edge.weight = weight
             self._notify(GraphEvent.EDGE_WEIGHT_CHANGED, edge=edge)
 
-    def edge_at(self, x: float, y: float, tolerance: float = 8.0) -> Edge | None:
-        """Return edge closest to (x, y) within tolerance."""
+    def set_edge_curvature(self, source: str, target: str, curvature: float,
+                           edge_id: str | None = None) -> None:
+        """Set curvature of edge. If edge_id provided, set curvature of specific edge.
+        Positive curvature = curve to the left, Negative = curve to the right."""
+        edge = self.get_edge(source, target, edge_id)
+        if edge is None and not self._directed:
+            edge = self.get_edge(target, source, edge_id)
+        if edge is not None:
+            self._save_undo()
+            edge.curvature = curvature
+            self._notify(GraphEvent.EDGE_WEIGHT_CHANGED, edge=edge)  # reuse event
+
+    def toggle_edge_bidirectional(self, source: str, target: str,
+                                   edge_id: str | None = None) -> bool:
+        """Toggle an edge's bidirectional property.
+        
+        This toggles a property on the edge itself - no separate reverse edge is created.
+        When bidirectional=True, the edge shows arrowheads at both ends.
+        
+        Returns True if now bidirectional, False if now unidirectional.
+        """
+        if not self._directed:
+            return False  # Only makes sense for directed graphs
+        
+        edge = self.get_edge(source, target, edge_id)
+        if edge is None:
+            return False
+        
+        # Toggle the bidirectional property on the edge itself
+        self._save_undo()
+        edge.bidirectional = not edge.bidirectional
+        self._notify(GraphEvent.EDGE_WEIGHT_CHANGED, edge=edge)
+        return edge.bidirectional
+
+    def separate_bidirectional_edge(self, source: str, target: str,
+                                     edge_id: str | None = None) -> bool:
+        """Separate a bidirectional edge into two separate parallel edges.
+        
+        Converts one bidirectional edge (A→B with bidirectional=True) into
+        two separate edges (A→B and B→A).
+        
+        Returns True if successful, False if edge was not bidirectional.
+        """
+        if not self._directed:
+            return False
+        
+        edge = self.get_edge(source, target, edge_id)
+        if edge is None or not edge.bidirectional:
+            return False
+        
+        # Create the reverse edge with same properties
+        self._save_undo()
+        reverse_edge = Edge(source=target, target=source,
+                           weight=edge.weight,
+                           color=edge.color,
+                           curvature=edge.curvature,
+                           bidirectional=False)
+        self._edges.append(reverse_edge)
+        
+        # Remove bidirectional property from original edge
+        edge.bidirectional = False
+        
+        self._notify(GraphEvent.EDGE_ADDED, edge=reverse_edge)
+        self._notify(GraphEvent.EDGE_WEIGHT_CHANGED, edge=edge)
+        return True
+
+    def is_edge_bidirectional(self, source: str, target: str,
+                               edge_id: str | None = None) -> bool:
+        """Check if an edge has the bidirectional property set."""
+        if not self._directed:
+            return False
+        edge = self.get_edge(source, target, edge_id)
+        if edge is None:
+            return False
+        return edge.bidirectional
+
+    def edge_at(self, x: float, y: float, tolerance: float = 10.0) -> Edge | None:
+        """Return edge closest to (x, y) within tolerance.
+        Accounts for curved edges using bezier curve distance."""
         best: Edge | None = None
         best_dist = tolerance
         for e in self._edges:
@@ -273,7 +393,17 @@ class Graph:
             tgt = self._nodes.get(e.target)
             if src is None or tgt is None:
                 continue
-            d = self._point_to_segment_dist(x, y, src.x, src.y, tgt.x, tgt.y)
+            
+            # Self-loop check
+            if e.source == e.target:
+                d = self._point_to_self_loop_dist(x, y, src.x, src.y, src.radius)
+            elif e.curvature != 0.0:
+                # Use bezier curve distance for curved edges
+                d = self._point_to_bezier_dist(x, y, src.x, src.y, tgt.x, tgt.y, e.curvature)
+            else:
+                # Straight line distance
+                d = self._point_to_segment_dist(x, y, src.x, src.y, tgt.x, tgt.y)
+            
             if d < best_dist:
                 best_dist = d
                 best = e
@@ -291,6 +421,52 @@ class Graph:
         proj_y = y1 + t * dy
         return math.hypot(px - proj_x, py - proj_y)
 
+    @staticmethod
+    def _point_to_bezier_dist(px: float, py: float,
+                               x1: float, y1: float,
+                               x2: float, y2: float,
+                               curvature: float) -> float:
+        """Distance from point to quadratic bezier curve.
+        Samples the curve at multiple points for accuracy."""
+        # Calculate control point (same as in canvas)
+        dx, dy = x2 - x1, y2 - y1
+        length = math.hypot(dx, dy)
+        if length == 0:
+            return math.hypot(px - x1, py - y1)
+        
+        # Perpendicular direction for control point offset
+        nx, ny = -dy / length, dx / length
+        mid_x = (x1 + x2) / 2
+        mid_y = (y1 + y2) / 2
+        ctrl_x = mid_x + nx * curvature
+        ctrl_y = mid_y + ny * curvature
+        
+        # Sample the bezier curve at multiple points
+        min_dist = float('inf')
+        num_samples = 20  # More samples = more accurate but slower
+        
+        for i in range(num_samples + 1):
+            t = i / num_samples
+            # Quadratic bezier: B(t) = (1-t)²*P0 + 2(1-t)t*P1 + t²*P2
+            one_minus_t = 1 - t
+            bx = one_minus_t * one_minus_t * x1 + 2 * one_minus_t * t * ctrl_x + t * t * x2
+            by = one_minus_t * one_minus_t * y1 + 2 * one_minus_t * t * ctrl_y + t * t * y2
+            dist = math.hypot(px - bx, py - by)
+            min_dist = min(min_dist, dist)
+        
+        return min_dist
+
+    @staticmethod
+    def _point_to_self_loop_dist(px: float, py: float,
+                                  cx: float, cy: float,
+                                  radius: float) -> float:
+        """Distance from point to self-loop edge."""
+        loop_r = radius * 1.2
+        loop_center_y = cy - radius - loop_r + 4
+        # Distance to the loop circle
+        dist_to_circle = math.hypot(px - cx, py - loop_center_y) - loop_r
+        return max(0, dist_to_circle)
+
     # -- clear / rebuild ---------------------------------------------------
 
     def clear(self, record_undo: bool = True) -> None:
@@ -303,7 +479,8 @@ class Graph:
 
     # -- adjacency matrix --------------------------------------------------
 
-    def get_adjacency_matrix(self) -> tuple[np.ndarray, list[str]]:
+    def get_adjacency_matrix(self, sum_parallel: bool = True) -> tuple[np.ndarray, list[str]]:
+        """Get adjacency matrix. For multigraphs, sum_parallel=True sums weights of parallel edges."""
         names = list(self._nodes.keys())
         n = len(names)
         idx = {name: i for i, name in enumerate(names)}
@@ -311,14 +488,31 @@ class Graph:
         for e in self._edges:
             i, j = idx.get(e.source), idx.get(e.target)
             if i is not None and j is not None:
-                mat[i][j] = e.weight
-                if not self._directed:
-                    mat[j][i] = e.weight
+                if sum_parallel:
+                    mat[i][j] += e.weight
+                    if not self._directed:
+                        mat[j][i] += e.weight
+                else:
+                    mat[i][j] = e.weight
+                    if not self._directed:
+                        mat[j][i] = e.weight
         return mat, names
+
+    def get_adjacency_list(self) -> dict[str, list[tuple[str, float, str]]]:
+        """Get adjacency list with edge weights and edge IDs.
+        Returns: {node_name: [(neighbor, weight, edge_id), ...]}"""
+        adj: dict[str, list[tuple[str, float, str]]] = {name: [] for name in self._nodes}
+        for e in self._edges:
+            if e.source in adj:
+                adj[e.source].append((e.target, e.weight, e.edge_id))
+            if not self._directed:
+                if e.target in adj:
+                    adj[e.target].append((e.source, e.weight, e.edge_id))
+        return adj
 
     def from_adjacency_matrix(self, matrix: np.ndarray, names: list[str]) -> None:
         """Rebuild graph from an adjacency matrix, preserving node positions
-        where possible."""
+        where possible. Note: parallel edges are not recreated from matrix."""
         self._save_undo()
         old_positions = {n.name: (n.x, n.y) for n in self._nodes.values()}
         self._nodes.clear()
@@ -342,13 +536,43 @@ class Graph:
 
     # -- NetworkX bridge ---------------------------------------------------
 
-    def to_networkx(self) -> nx.DiGraph | nx.Graph:
-        G = nx.DiGraph() if self._directed else nx.Graph()
+    def to_networkx(self) -> nx.MultiDiGraph | nx.MultiGraph:
+        """Convert to NetworkX MultiGraph (supports parallel edges)."""
+        G = nx.MultiDiGraph() if self._directed else nx.MultiGraph()
         for name, node in self._nodes.items():
             G.add_node(name, x=node.x, y=node.y, color=node.color)
         for e in self._edges:
-            G.add_edge(e.source, e.target, weight=e.weight)
+            G.add_edge(e.source, e.target, key=e.edge_id, weight=e.weight)
         return G
+
+    def from_networkx(self, G: nx.MultiDiGraph | nx.MultiGraph) -> None:
+        """Load graph from NetworkX MultiGraph."""
+        self._save_undo()
+        self._nodes.clear()
+        self._edges.clear()
+        for name, data in G.nodes(data=True):
+            self._nodes[name] = Node(
+                name=name,
+                x=data.get("x", 0.0),
+                y=data.get("y", 0.0),
+                color=data.get("color", "#4fc3f7")
+            )
+        if G.is_multigraph():
+            for u, v, key, data in G.edges(keys=True, data=True):
+                self._edges.append(Edge(
+                    source=u, target=v,
+                    weight=data.get("weight", 1.0),
+                    edge_id=key
+                ))
+        else:
+            for u, v, data in G.edges(data=True):
+                self._edges.append(Edge(
+                    source=u, target=v,
+                    weight=data.get("weight", 1.0)
+                ))
+        self._directed = G.is_directed()
+        self._node_counter = len(self._nodes)
+        self._notify(GraphEvent.GRAPH_REBUILT)
 
     # -- undo / redo -------------------------------------------------------
 
@@ -424,13 +648,18 @@ class Graph:
     # -- helpers -----------------------------------------------------------
 
     def _merge_undirected_edges(self) -> None:
-        seen: set[tuple[str, str]] = set()
+        """Merge duplicate edges when switching to undirected mode.
+        Now preserves parallel edges by using edge_id."""
+        # For undirected graphs, we normalize edge direction
+        # but keep parallel edges with different edge_ids
+        seen: dict[tuple[str, str], Edge] = {}
         merged: list[Edge] = []
         for e in self._edges:
             key = tuple(sorted((e.source, e.target)))
             if key not in seen:
-                seen.add(key)
+                seen[key] = e
                 merged.append(e)
+            # Keep parallel edges - they have different edge_ids
         self._edges = merged
 
     def layout_circle(self, cx: float = 400, cy: float = 300,

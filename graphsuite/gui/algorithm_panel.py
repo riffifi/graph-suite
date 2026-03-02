@@ -10,7 +10,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QComboBox, QPushButton, QLabel, QTextEdit, QLineEdit,
-    QGroupBox,
+    QGroupBox, QCheckBox,
 )
 
 from graphsuite.core.graph import Graph
@@ -49,6 +49,8 @@ class AlgorithmPanel(QWidget):
         super().__init__(parent)
         self.graph = graph
         self._canvas: GraphCanvas | None = None
+        self._last_nodes: set[str] = set()
+        self._last_edges: set[tuple[str, str]] = set()
         self._build_ui()
 
     def set_canvas(self, canvas: "GraphCanvas") -> None:
@@ -64,7 +66,7 @@ class AlgorithmPanel(QWidget):
         layout.setSpacing(6)
 
         # algorithm selector
-        algo_group = QGroupBox("Algorithm")
+        algo_group = QGroupBox()
         algo_layout = QVBoxLayout(algo_group)
 
         self._combo = QComboBox()
@@ -95,10 +97,15 @@ class AlgorithmPanel(QWidget):
         self._btn_run.clicked.connect(self._run)
 
         self._btn_clear = QPushButton("Clear Highlight")
-        self._btn_clear.clicked.connect(lambda: self.clear_highlight.emit())
+        self._btn_clear.clicked.connect(self._clear_highlight)
+
+        self._show_only_check = QCheckBox("Show Only Path")
+        self._show_only_check.setToolTip("Hide non-highlighted nodes and edges")
+        self._show_only_check.stateChanged.connect(self._update_highlight)
 
         btn_row.addWidget(self._btn_run)
         btn_row.addWidget(self._btn_clear)
+        btn_row.addWidget(self._show_only_check)
         layout.addLayout(btn_row)
 
         # results
@@ -353,7 +360,29 @@ class AlgorithmPanel(QWidget):
 
     # -- helpers -----------------------------------------------------------
 
+    def _clear_highlight(self) -> None:
+        """Clear highlight and reset 'Show Only Path' mode."""
+        self._last_nodes.clear()
+        self._last_edges.clear()
+        self._show_only_check.setChecked(False)
+        if self._canvas:
+            self._canvas.clear_highlight()
+
+    def _update_highlight(self) -> None:
+        """Update highlight based on 'Show Only Path' checkbox state."""
+        if self._canvas is None:
+            return
+            
+        if self._show_only_check.isChecked():
+            # Show only the highlighted path
+            self._canvas.set_highlight_only(self._last_nodes, self._last_edges)
+        else:
+            # Show full graph with highlight
+            self._canvas.set_highlight(self._last_nodes, self._last_edges)
+
     def _show_result(self, text: str, nodes: set[str],
                      edges: set[tuple[str, str]]) -> None:
+        self._last_nodes = nodes
+        self._last_edges = edges
         self._result_text.setPlainText(text)
-        self.highlight_request.emit(nodes, edges)
+        self._update_highlight()

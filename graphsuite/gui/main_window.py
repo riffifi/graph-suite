@@ -238,7 +238,7 @@ class MainWindow(QMainWindow):
 
     def _build_docks(self) -> None:
         # Matrix editor – right
-        matrix_dock = QDockWidget("Adjacency Matrix", self)
+        matrix_dock = QDockWidget("Matrixes", self)
         matrix_dock.setWidget(self.matrix_editor)
         matrix_dock.setMinimumWidth(250)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, matrix_dock)
@@ -469,6 +469,9 @@ class HelpDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        # Initialize tutorial content list
+        self._tutorial_sidebar_content: list[str] = []
+
         # Left sidebar
         sidebar = self._create_sidebar([
             ("Getting Started", self._tutorial_getting_started()),
@@ -479,7 +482,7 @@ class HelpDialog(QDialog):
             ("Graph Properties", self._tutorial_properties()),
             ("Running Algorithms", self._tutorial_algorithms()),
             ("Saving & Exporting", self._tutorial_export()),
-        ])
+        ], self._tutorial_sidebar_content)
 
         # Content area
         self._tutorial_content = QTextEdit()
@@ -513,6 +516,9 @@ class HelpDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        # Initialize DSL content list
+        self._dsl_sidebar_content: list[str] = []
+
         # Left sidebar
         sidebar = self._create_sidebar([
             ("Introduction", self._dsl_intro()),
@@ -522,7 +528,7 @@ class HelpDialog(QDialog):
             ("Algorithm Commands", self._dsl_algorithms()),
             ("Layout Commands", self._dsl_layout()),
             ("Example Scripts", self._dsl_examples()),
-        ])
+        ], self._dsl_sidebar_content)
 
         # Content area
         self._dsl_content = QTextEdit()
@@ -556,6 +562,9 @@ class HelpDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        # Initialize shortcuts content list
+        self._shortcuts_sidebar_content: list[str] = []
+
         # Left sidebar
         shortcuts_data = [
             ("Modes", self._shortcuts_modes()),
@@ -563,7 +572,7 @@ class HelpDialog(QDialog):
             ("Edit", self._shortcuts_edit()),
             ("File", self._shortcuts_file()),
         ]
-        sidebar = self._create_sidebar(shortcuts_data)
+        sidebar = self._create_sidebar(shortcuts_data, self._shortcuts_sidebar_content)
 
         # Content area
         self._shortcuts_content = QTextEdit()
@@ -589,7 +598,7 @@ class HelpDialog(QDialog):
         layout.addWidget(self._shortcuts_content, 1)
         return widget
 
-    def _create_sidebar(self, sections: list[tuple[str, str]]) -> QFrame:
+    def _create_sidebar(self, sections: list[tuple[str, str]], content_list: list) -> QFrame:
         """Create left sidebar with navigation buttons."""
         sidebar = QFrame()
         sidebar.setFrameShape(QFrame.Shape.NoFrame)
@@ -622,7 +631,7 @@ class HelpDialog(QDialog):
         layout.setSpacing(0)
 
         self._sidebar_buttons: list[QPushButton] = []
-        self._sidebar_content: list[str] = []
+        content_list.clear()
 
         for i, (title, content) in enumerate(sections):
             btn = QPushButton(f"  {title}")
@@ -630,7 +639,7 @@ class HelpDialog(QDialog):
             btn.clicked.connect(lambda checked, idx=i: self._on_section_clicked(idx))
             layout.addWidget(btn)
             self._sidebar_buttons.append(btn)
-            self._sidebar_content.append(content)
+            content_list.append(content)
 
         layout.addStretch()
 
@@ -649,13 +658,16 @@ class HelpDialog(QDialog):
 
         # Update content based on which tab is active
         current_tab = self._tabs.currentIndex()
-        content = self._sidebar_content[index]
-
+        
+        # Get the correct content list for current tab
         if current_tab == 0:  # Tutorial
+            content = self._tutorial_sidebar_content[index]
             self._tutorial_content.setHtml(content)
         elif current_tab == 1:  # DSL
+            content = self._dsl_sidebar_content[index]
             self._dsl_content.setHtml(content)
         elif current_tab == 2:  # Shortcuts
+            content = self._shortcuts_sidebar_content[index]
             self._shortcuts_content.setHtml(content)
 
     def _on_tab_changed(self, index: int) -> None:
@@ -670,276 +682,674 @@ class HelpDialog(QDialog):
 
     def _tutorial_getting_started(self) -> str:
         return """\
-<p>Welcome to Graph Suite! This tutorial will guide you through the basics.</p>
+<p>Welcome to <b>Graph Suite</b> — a powerful, intuitive tool for creating, editing, and analyzing graphs. 
+This tutorial will guide you through everything you need to know.</p>
+
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; border-left: 4px solid #7c4dff; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #4fc3f7;"> Quick Start</h4>
+  <ol style="margin: 10px 0;">
+    <li>Press <b>N</b> and click to add nodes</li>
+    <li>Press <b>E</b> and click two nodes to connect them</li>
+    <li>Press <b>S</b> to select and drag nodes</li>
+    <li>Run algorithms from the right panel</li>
+  </ol>
+</div>
 
 <h3>The Interface</h3>
-<ul>
-  <li><b>Canvas (center)</b> — Where you create and edit your graph</li>
-  <li><b>Toolbar (top)</b> — Quick access to tools and commands</li>
-  <li><b>Adjacency Matrix (right)</b> — Edit graph structure as a matrix</li>
-  <li><b>Algorithms (right)</b> — Run graph algorithms</li>
-  <li><b>Script Console (bottom)</b> — Write and execute DSL scripts</li>
-</ul>
+<table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+  <tr style="background-color: #252536;">
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b> Canvas</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;">Main workspace for creating and editing graphs</td>
+  </tr>
+  <tr>
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b> Toolbar</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;">Quick access to tools, modes, and commands</td>
+  </tr>
+  <tr style="background-color: #252536;">
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b> Matrices</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;">Edit graph structure as adjacency/incidence matrices</td>
+  </tr>
+  <tr>
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b> Algorithms</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;">Run BFS, DFS, Dijkstra, MST, and more</td>
+  </tr>
+  <tr style="background-color: #252536;">
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b> DSL Console</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;">Write scripts to automate graph creation</td>
+  </tr>
+</table>
 
-<h3>Your First Graph</h3>
-<ol>
-  <li>Click the <b>"Add Node"</b> button (or press <b>N</b>)</li>
-  <li>Click anywhere on the canvas to place a node</li>
-  <li>Click <b>"Add Edge"</b> (or press <b>E</b>)</li>
-  <li>Click two nodes to connect them</li>
-</ol>"""
+<h3>Essential Shortcuts</h3>
+<ul>
+  <li><code>S</code> — Select mode</li>
+  <li><code>N</code> — Add node mode</li>
+  <li><code>E</code> — Add edge mode</li>
+  <li><code>D</code> — Delete mode</li>
+  <li><code>F</code> — Fit view to graph</li>
+  <li><code>Ctrl+Z/Y</code> — Undo/Redo</li>
+</ul>"""
 
     def _tutorial_nodes(self) -> str:
         return """\
-<h3>Add a Node</h3>
-<ol>
-  <li>Select the <b>"Add Node"</b> tool from toolbar (or press <b>N</b>)</li>
-  <li>Click on the canvas where you want the node</li>
-  <li>Nodes are auto-named (v1, v2, ...) or use context menu to name</li>
-</ol>
+<h3>Creating Nodes</h3>
 
-<h3>Name a Node</h3>
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #66bb6a;">Method 1: Canvas Tool</h4>
+  <ol>
+    <li>Press <b>N</b> or click "Add Node" in toolbar</li>
+    <li>Click anywhere on the canvas</li>
+    <li>Node appears with auto-generated name (v1, v2, ...)</li>
+  </ol>
+</div>
+
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #66bb6a;">Method 2: Matrix Editor</h4>
+  <ol>
+    <li>Go to the Matrices panel</li>
+    <li>Click "+ Node" button</li>
+    <li>Enter a name (or accept default)</li>
+  </ol>
+</div>
+
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #66bb6a;">Method 3: DSL Script</h4>
+  <pre>node A at 100 200
+node B at 300 200
+nodes C D E at 150 300  # Multiple at once</pre>
+</div>
+
+<h3>Renaming Nodes</h3>
 <ul>
-  <li><b>Double-click</b> the node to rename it</li>
+  <li><b>Double-click</b> the node and type a new name</li>
   <li>Or right-click → "Rename…"</li>
+  <li>Names can be any alphanumeric string</li>
 </ul>
 
-<h3>Color a Node</h3>
+<h3>Coloring Nodes</h3>
 <ul>
   <li>Right-click the node → "Change Color…"</li>
-  <li>Pick a color from the dialog</li>
+  <li>Use the color picker to choose any color</li>
+  <li>Colors help visualize node groups or properties</li>
 </ul>
 
-<h3>Move a Node</h3>
+<h3>Moving Nodes</h3>
 <ul>
   <li>Select mode (<b>S</b>)</li>
-  <li>Click and drag the node</li>
-  <li>Drag multiple: Ctrl+click to select, then drag</li>
+  <li>Click and drag to move</li>
+  <li><b>Ctrl+click</b> to select multiple, drag to move all</li>
 </ul>"""
 
     def _tutorial_edges(self) -> str:
         return """\
-<h3>Add an Edge</h3>
+<h3>Creating Edges</h3>
+
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #66bb6a;">Basic Edge Creation</h4>
+  <ol>
+    <li>Press <b>E</b> or click "Add Edge" in toolbar</li>
+    <li>Click the <b>source</b> node</li>
+    <li>Click the <b>target</b> node</li>
+    <li>Edge appears with arrow (directed graphs)</li>
+  </ol>
+</div>
+
+<h3>Edge Types</h3>
+<table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+  <tr style="background-color: #252536;">
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>→</b> Directed</td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;">One-way connection (default)</td>
+  </tr>
+  <tr>
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>↔</b> Bidirectional</td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;">Two-way on single edge (right-click → Make Bidirectional)</td>
+  </tr>
+  <tr style="background-color: #252536;">
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>—</b> Undirected</td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;">Switch graph to undirected mode</td>
+  </tr>
+</table>
+
+<h3>Edge Weights</h3>
 <ol>
-  <li>Select <b>"Add Edge"</b> tool (or press <b>E</b>)</li>
-  <li>Click the source node</li>
-  <li>Click the target node</li>
+  <li>Enable "Weighted" mode in toolbar</li>
+  <li>Double-click edge to edit weight</li>
+  <li>Or edit directly in Adjacency Matrix</li>
+  <li>Weights affect algorithms (Dijkstra, MST, etc.)</li>
 </ol>
 
-<h3>Set Edge Weight</h3>
+<h3>Curved Edges</h3>
 <ul>
-  <li>Enable weighted mode: toggle "Weighted" in toolbar</li>
-  <li>Double-click the edge to edit weight</li>
-  <li>Or edit directly in the Adjacency Matrix</li>
+  <li>Hold <b>Ctrl</b> in Select mode</li>
+  <li>Drag the handle at edge midpoint</li>
+  <li>Useful for distinguishing parallel edges</li>
 </ul>
 
-<h3>Directed vs Undirected</h3>
+<h3>Parallel Edges</h3>
 <ul>
-  <li><b>Directed</b>: Edges have direction (arrow)</li>
-  <li><b>Undirected</b>: Edges go both ways (no arrow)</li>
-  <li>Toggle with the "Directed" button or Graph menu</li>
-</ul>
-
-<h3>Bidirectional Edges</h3>
-<p>Create two opposite edges between same nodes, or use DSL: <code>edge A &lt;-&gt; B</code></p>"""
+  <li>Hold <b>Shift</b> while creating edge</li>
+  <li>Creates additional edge between same nodes</li>
+  <li>Auto-curves for visual distinction</li>
+</ul>"""
 
     def _tutorial_editing(self) -> str:
         return """\
-<h3>Select Items</h3>
+<h3>Selecting Items</h3>
 <ul>
-  <li>Click a node to select it</li>
-  <li>Ctrl+click to add to selection</li>
-  <li>Click empty space to deselect</li>
+  <li><b>Click</b> — Select single node/edge</li>
+  <li><b>Ctrl+click</b> — Add to selection</li>
+  <li><b>Click empty space</b> — Deselect all</li>
+  <li>Selected items show highlight glow</li>
 </ul>
 
-<h3>Delete Items</h3>
-<ul>
-  <li>Select <b>"Delete"</b> tool (or press <b>D</b>)</li>
-  <li>Click the node or edge to remove</li>
-  <li>Or select and press <b>Delete</b> key</li>
-</ul>
+<h3>Deleting Items</h3>
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #ef5350;">Method 1: Delete Tool</h4>
+  <ol>
+    <li>Press <b>D</b> or click "Delete" in toolbar</li>
+    <li>Click the item to remove</li>
+  </ol>
+</div>
+
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #ef5350;">Method 2: Keyboard</h4>
+  <ol>
+    <li>Select items in Select mode</li>
+    <li>Press <b>Delete</b> or <b>Backspace</b></li>
+  </ol>
+</div>
+
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #ef5350;">Method 3: Context Menu</h4>
+  <ol>
+    <li>Right-click the item</li>
+    <li>Select "Delete Node" or "Delete Edge"</li>
+  </ol>
+</div>
 
 <h3>Undo/Redo</h3>
 <ul>
   <li><b>Ctrl+Z</b> — Undo last action</li>
   <li><b>Ctrl+Y</b> — Redo undone action</li>
-  <li>Undo history shown in status bar</li>
+  <li>Up to 100 actions stored</li>
+  <li>Works for all operations (add, delete, move, edit)</li>
+</ul>
+
+<h3>Editing Properties</h3>
+<ul>
+  <li><b>Node color</b>: Right-click → "Change Color…"</li>
+  <li><b>Node name</b>: Double-click or right-click → "Rename…"</li>
+  <li><b>Edge weight</b>: Double-click (when weighted mode enabled)</li>
+  <li><b>Edge curvature</b>: Ctrl+drag handle</li>
+  <li><b>Edge direction</b>: Right-click → "Make Bidirectional"</li>
 </ul>"""
 
     def _tutorial_navigation(self) -> str:
         return """\
-<h3>Pan the View</h3>
-<ul>
-  <li><b>Click-drag on empty space</b> to pan</li>
-  <li><b>Middle mouse drag</b> to pan (any mode)</li>
-</ul>
+<h3>Canvas Navigation</h3>
+<p>Navigate large graphs efficiently with these navigation tools.</p>
 
-<h3>Zoom</h3>
-<ul>
-  <li><b>Mouse wheel</b> — Zoom in/out</li>
-  <li><b>Zoom + / -</b> buttons in toolbar</li>
-  <li><b>Ctrl++ / Ctrl+-</b> keyboard shortcuts</li>
-</ul>
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #4fc3f7;"> Panning</h4>
+  <ul>
+    <li><b>Middle mouse drag</b> — Pan from anywhere (works in any mode)</li>
+    <li><b>Left drag on empty space</b> — Pan in Select mode</li>
+    <li><b>Arrow keys</b> — Nudge view in small increments</li>
+  </ul>
+</div>
+
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #4fc3f7;"> Zooming</h4>
+  <ul>
+    <li><b>Mouse wheel</b> — Zoom in/out at cursor position</li>
+    <li><b>Ctrl + mouse wheel</b> — Fine-grained zoom control</li>
+    <li><b>Toolbar buttons</b> — Click + or - buttons</li>
+    <li><b>Ctrl + / Ctrl -</b> — Keyboard zoom shortcuts</li>
+  </ul>
+</div>
 
 <h3>Fit View</h3>
 <ul>
-  <li>Press <b>F</b> to fit all nodes on screen</li>
-  <li>Or click "Fit" in toolbar</li>
+  <li><b>Press F</b> — Automatically fit all nodes on screen</li>
+  <li><b>Toolbar → Fit</b> — Click the Fit button</li>
+  <li>Resets zoom and pan to show entire graph</li>
+  <li>Useful after importing large graphs</li>
+</ul>
+
+<h3>Zoom Levels</h3>
+<table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+  <tr style="background-color: #252536;">
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>25%</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;">Overview of very large graphs</td>
+  </tr>
+  <tr>
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>100%</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;">Normal working view (default)</td>
+  </tr>
+  <tr style="background-color: #252536;">
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>200%+</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;">Precision editing of small details</td>
+  </tr>
+</table>
+
+<h3>Navigation Tips</h3>
+<ul>
+  <li>Zoom out first to see overall structure</li>
+  <li>Use Fit View after layout changes</li>
+  <li>Middle-drag is fastest for repositioning</li>
+  <li>Current zoom level shown in status bar</li>
 </ul>"""
 
     def _tutorial_properties(self) -> str:
         return """\
-<h3>Toggle Graph Type</h3>
-<ul>
-  <li><b>Directed/Undirected</b>: Toolbar toggle or Graph menu</li>
-  <li><b>Weighted/Unweighted</b>: Toolbar toggle or Graph menu</li>
-</ul>
+<h3>Graph Properties</h3>
+<p>Configure fundamental graph characteristics that affect algorithms and visualization.</p>
+
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #ab47bc;">Directed vs Undirected</h4>
+  <table style="width: 100%; margin-top: 10px;">
+    <tr>
+      <td style="padding: 10px;"><b>Directed</b></td>
+      <td style="padding: 10px;">Edges have direction (A→B ≠ B→A)</td>
+    </tr>
+    <tr>
+      <td style="padding: 10px;"><b>Undirected</b></td>
+      <td style="padding: 10px;">Edges go both ways (A—B = B—A)</td>
+    </tr>
+  </table>
+  <p style="margin-top: 10px;"><b>Toggle:</b> Toolbar → "Directed" button or Graph menu</p>
+</div>
+
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #ab47bc;">Weighted vs Unweighted</h4>
+  <table style="width: 100%; margin-top: 10px;">
+    <tr>
+      <td style="padding: 10px;"><b>Weighted</b></td>
+      <td style="padding: 10px;">Edges have numeric weights (costs, distances)</td>
+    </tr>
+    <tr>
+      <td style="padding: 10px;"><b>Unweighted</b></td>
+      <td style="padding: 10px;">All edges treated equally (weight = 1)</td>
+    </tr>
+  </table>
+  <p style="margin-top: 10px;"><b>Toggle:</b> Toolbar → "Weighted" button or Graph menu</p>
+</div>
 
 <h3>Matrix Editor</h3>
+<p>Edit graph structure using mathematical representations.</p>
+
+<h4>Adjacency Matrix</h4>
 <ul>
-  <li><b>Adjacency Matrix</b>: Edit edge weights directly</li>
-  <li><b>Incidence Matrix</b>: View node-edge relationships</li>
-  <li>Click "+ Node" to add nodes from matrix</li>
-  <li>Click "Apply Matrix" to rebuild from edits</li>
+  <li><b>Rows/Cols</b> represent nodes</li>
+  <li><b>Cell value</b> = edge weight (0 = no edge)</li>
+  <li><b>Click cell</b> to edit weight directly</li>
+  <li><b>+ Node</b> adds new node to matrix</li>
+  <li><b>Apply Matrix</b> rebuilds graph from matrix</li>
+</ul>
+
+<h4>Incidence Matrix</h4>
+<ul>
+  <li><b>Rows</b> = nodes, <b>Columns</b> = edges</li>
+  <li><b>1</b> = edge starts at node</li>
+  <li><b>-1</b> = edge ends at node (directed)</li>
+  <li><b>2</b> = self-loop (undirected)</li>
+  <li>Read-only view for reference</li>
+</ul>
+
+<h3>Algorithm Panel</h3>
+<ul>
+  <li><b>Dropdown</b> — Select algorithm</li>
+  <li><b>Source/Target</b> — Enter node names</li>
+  <li><b>Run</b> — Execute algorithm</li>
+  <li><b>Results</b> — View output and highlights</li>
+  <li><b>Clear Highlight</b> — Remove canvas highlights</li>
 </ul>"""
 
     def _tutorial_algorithms(self) -> str:
         return """\
-<h3>Run an Algorithm</h3>
-<ol>
-  <li>Open the "Algorithms" panel (right dock)</li>
-  <li>Select an algorithm from dropdown</li>
-  <li>Enter required parameters (source/target nodes)</li>
-  <li>Click "Run"</li>
-</ol>
+<h3>Running Algorithms</h3>
+<p>Graph Suite includes powerful algorithms for analysis and visualization.</p>
 
-<h3>Available Algorithms</h3>
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #66bb6a;">Step-by-Step</h4>
+  <ol>
+    <li>Open the <b>Algorithms</b> panel (right dock)</li>
+    <li>Select an algorithm from the dropdown</li>
+    <li>Enter required parameters (node names)</li>
+    <li>Click <b>"Run"</b> button</li>
+    <li>View results in output box</li>
+    <li>Highlighted elements appear on canvas</li>
+  </ol>
+</div>
+
+<h3>Algorithm Categories</h3>
+
+<h4> Traversal Algorithms</h4>
+<table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+  <tr style="background-color: #252536;">
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>BFS</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;">Breadth-First Search — level-by-level exploration</td>
+  </tr>
+  <tr>
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>DFS</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;">Depth-First Search — path-following exploration</td>
+  </tr>
+</table>
+
+<h4> Shortest Path Algorithms</h4>
+<table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+  <tr style="background-color: #252536;">
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>Dijkstra</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;">Fastest path (non-negative weights)</td>
+  </tr>
+  <tr>
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>Bellman-Ford</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;">Handles negative weights, detects negative cycles</td>
+  </tr>
+</table>
+
+<h4> Structural Algorithms</h4>
+<table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+  <tr style="background-color: #252536;">
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>MST</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;">Minimum Spanning Tree (undirected graphs)</td>
+  </tr>
+  <tr>
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>Topological Sort</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;">Linear ordering (directed acyclic graphs)</td>
+  </tr>
+  <tr style="background-color: #252536;">
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>Components</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;">Connected components identification</td>
+  </tr>
+  <tr>
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>SCC</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;">Strongly Connected Components (directed)</td>
+  </tr>
+</table>
+
+<h3>Understanding Results</h3>
 <ul>
-  <li><b>BFS/DFS Traversal</b> — Explore graph order</li>
-  <li><b>Dijkstra/Bellman-Ford</b> — Shortest path</li>
-  <li><b>MST</b> — Minimum spanning tree (undirected)</li>
-  <li><b>Topological Sort</b> — Ordering (directed acyclic)</li>
-  <li><b>Components</b> — Connected components</li>
-  <li><b>SCC</b> — Strongly connected components</li>
-  <li><b>Cycle Detection</b> — Find cycles</li>
-  <li><b>Centrality</b> — Node importance</li>
+  <li><b>Text output</b> — Algorithm results in Results box</li>
+  <li><b>Node highlights</b> — Affected nodes glow on canvas</li>
+  <li><b>Edge highlights</b> — Path edges highlighted</li>
+  <li><b>Clear</b> — Click "Clear Highlight" to reset view</li>
 </ul>
 
-<h3>Results</h3>
+<h3>Algorithm Requirements</h3>
 <ul>
-  <li>Output appears in the Results box</li>
-  <li>Highlighted nodes/edges shown on canvas</li>
-  <li>Click "Clear Highlight" to remove</li>
+  <li><b>MST</b> — Requires undirected graph</li>
+  <li><b>Topological Sort</b> — Requires directed acyclic graph</li>
+  <li><b>Dijkstra</b> — Requires non-negative weights</li>
+  <li><b>SCC</b> — Requires directed graph</li>
 </ul>"""
 
     def _tutorial_export(self) -> str:
         return """\
-<h3>Save Graph</h3>
+<h3>Saving & Loading</h3>
+<p>Preserve your work and share graphs with others.</p>
+
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #ffa726;"> Save Graph</h4>
+  <ul>
+    <li><b>File → Save</b> (Ctrl+S) — Save to current file</li>
+    <li><b>File → Save As…</b> (Ctrl+Shift+S) — Choose new location</li>
+    <li><b>Format</b> — JSON (.graph.json)</li>
+    <li><b>Includes</b> — Nodes, edges, weights, positions, colors</li>
+  </ul>
+</div>
+
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #ffa726;"> Open Graph</h4>
+  <ul>
+    <li><b>File → Open…</b> (Ctrl+O) — Load saved graph</li>
+    <li><b>Recent Files</b> — Access recently opened graphs</li>
+    <li><b>Auto-recovery</b> — Unsaved work preserved on crash</li>
+  </ul>
+</div>
+
+<h3>Exporting Images</h3>
 <ul>
-  <li><b>File → Save</b> (Ctrl+S)</li>
-  <li><b>File → Save As…</b> (Ctrl+Shift+S)</li>
-  <li>Format: JSON (.graph.json)</li>
+  <li><b>File → Export PNG…</b> — Save canvas as image</li>
+  <li><b>Resolution</b> — Current view resolution</li>
+  <li><b>Transparent BG</b> — Option for transparent background</li>
+  <li><b>Use case</b> — Presentations, documentation, sharing</li>
 </ul>
 
-<h3>Export as Image</h3>
+<h3>DSL Export</h3>
 <ul>
-  <li><b>File → Export PNG…</b></li>
-  <li>Choose location and filename</li>
-  <li>Current canvas view is exported</li>
+  <li><b>DSL Console → "Graph → Script"</b></li>
+  <li>Generates DSL code from current graph</li>
+  <li>Useful for documentation and reproducibility</li>
+  <li>Can be edited and re-run</li>
 </ul>
 
-<h3>Load Graph</h3>
+<h3>File Format Details</h3>
+<pre style="background-color: #252536; padding: 15px; border-radius: 6px;">
+{
+  "directed": true,
+  "weighted": true,
+  "nodes": [
+    {"name": "A", "x": 100, "y": 200, "color": "#4fc3f7"}
+  ],
+  "edges": [
+    {"source": "A", "target": "B", "weight": 5}
+  ]
+}
+</pre>
+
+<h3>Best Practices</h3>
 <ul>
-  <li><b>File → Open…</b> (Ctrl+O)</li>
-  <li>Select a .graph.json file</li>
+  <li>Save frequently during editing</li>
+  <li>Use descriptive filenames</li>
+  <li>Export PNG for presentations</li>
+  <li>Keep DSL scripts for reproducibility</li>
+  <li>Version control with Git for complex graphs</li>
 </ul>"""
 
     def _dsl_intro(self) -> str:
         return """\
-<p>The DSL (Domain Specific Language) lets you script graph operations.
-Write scripts in the Console panel at the bottom and click "Run Script".</p>
+<h3>What is DSL?</h3>
+<p>The <b>Domain Specific Language (DSL)</b> is a text-based scripting language for Graph Suite. 
+Write scripts to create, modify, and analyze graphs programmatically.</p>
 
-<h3>Why Use DSL?</h3>
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0; border-left: 4px solid #7c4dff;">
+  <h4 style="margin-top: 0; color: #4fc3f7;"> Why Use DSL?</h4>
+  <ul>
+    <li><b>Speed</b> — Create complex graphs with few lines</li>
+    <li><b>Precision</b> — Exact coordinates and weights</li>
+    <li><b>Reproducibility</b> — Save and re-run scripts</li>
+    <li><b>Automation</b> — Batch operations and algorithms</li>
+    <li><b>Sharing</b> — Text files are easy to share</li>
+  </ul>
+</div>
+
+<h3>Using the DSL Console</h3>
+<ol>
+  <li>Open the <b>DSL Console</b> panel (bottom dock)</li>
+  <li>Type your script in the editor</li>
+  <li>Click <b>"Run Script"</b> or press Ctrl+Enter</li>
+  <li>View output in the output pane</li>
+  <li>Graph appears on canvas with highlights</li>
+</ol>
+
+<h3>Console Features</h3>
 <ul>
-  <li>Create complex graphs quickly</li>
-  <li>Reproduce graphs exactly</li>
-  <li>Automate repetitive tasks</li>
-  <li>Share graph definitions</li>
+  <li><b>Syntax highlighting</b> — Keywords, numbers, arrows colored</li>
+  <li><b>Command hints</b> — Type a command to see syntax</li>
+  <li><b>Graph → Script</b> — Export current graph as DSL</li>
+  <li><b>Example</b> — Load sample script</li>
 </ul>"""
 
     def _dsl_settings(self) -> str:
         return """\
 <h3>Comments</h3>
-<pre># Lines starting with # are ignored</pre>
+<p>Comments start with <code>#</code> and are ignored by the interpreter.</p>
+<pre># This is a comment
+node A at 100 100  # Inline comment</pre>
 
-<h3>Graph Mode</h3>
-<pre>set directed true    # Directed edges (default)
-set directed false   # Undirected edges
-set weighted true    # Enable weights
-set weighted false   # Disable weights (default)</pre>"""
+<h3>Graph Mode Settings</h3>
+<p>Configure graph properties before creating nodes and edges.</p>
+
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #ab47bc;">Directed vs Undirected</h4>
+  <pre>set directed true     # Directed edges (default)
+set directed false    # Undirected edges</pre>
+</div>
+
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #ab47bc;">Weighted vs Unweighted</h4>
+  <pre>set weighted true     # Enable edge weights
+set weighted false    # Disable weights (default)</pre>
+</div>
+
+<h3>Output Control</h3>
+<pre>cmdoutput true      # Show command output (default)
+cmdoutput false     # Silent mode (only print shows)</pre>"""
 
     def _dsl_nodes(self) -> str:
         return """\
-<h3>Add Node</h3>
-<pre>node A              # Auto position
-node B at 100 200   # Specific coordinates</pre>
+<h3>Creating Nodes</h3>
 
-<h3>Delete Node</h3>
-<pre>delete node A</pre>
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #66bb6a;">Single Node</h4>
+  <pre>node A                    # Auto-positioned
+node B at 100 200       # Specific coordinates</pre>
+</div>
 
-<h3>Rename Node</h3>
-<pre>rename old new</pre>
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #66bb6a;">Multiple Nodes</h4>
+  <pre>nodes A B C D           # Multiple at once
+nodes X Y Z at 300 400  # Multiple at same position</pre>
+</div>
 
-<h3>Set Color</h3>
-<pre>color A #ff5500    # Hex color code</pre>"""
+<h3>Node Operations</h3>
+<table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+  <tr style="background-color: #252536;">
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>Delete</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><code>delete node A</code></td>
+  </tr>
+  <tr>
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>Rename</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><code>rename old new</code></td>
+  </tr>
+  <tr style="background-color: #252536;">
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>Color</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><code>color A #ff5500</code></td>
+  </tr>
+</table>
+
+<h3>Layout Commands</h3>
+<pre>grid 3 3              # 3x3 grid of nodes
+grid 4 5 spacing 100  # Custom spacing
+circle 6              # 6 nodes in circle
+circle 8 radius 200   # Custom radius</pre>"""
 
     def _dsl_edges(self) -> str:
         return """\
-<h3>Add Directed Edge</h3>
-<pre>edge A -> B              # Basic directed
-edge A -> B weight 5     # With weight</pre>
+<h3>Creating Edges</h3>
 
-<h3>Add Undirected Edge</h3>
-<pre>edge A -- B              # Undirected</pre>
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #66bb6a;">Edge Types</h4>
+  <pre>edge A -> B             # Directed edge
+edge A -- B             # Undirected edge  
+edge A <-> B            # Bidirectional edge</pre>
+</div>
 
-<h3>Add Bidirectional Edges</h3>
-<pre>edge A <-> B             # Both directions at once</pre>
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #66bb6a;">With Weights</h4>
+  <pre>edge A -> B weight 5    # Weighted directed
+edge A -- B weight 3    # Weighted undirected</pre>
+</div>
 
-<h3>Delete Edge</h3>
-<pre>delete edge A B</pre>"""
+<h3>Multiple Edges</h3>
+<pre>edges A B C -> D      # Multiple sources to one target
+edges A B -> C D      # Multiple to multiple (creates all)</pre>
+
+<h3>Edge Patterns</h3>
+<pre>path A B C D          # Chain: A→B→C→D
+cycle A B C D         # Cycle: A→B→C→D→A
+connect A B C D       # Complete graph (all pairs)</pre>
+
+<h3>Edge Operations</h3>
+<table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+  <tr style="background-color: #252536;">
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>Delete</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><code>delete edge A B</code></td>
+  </tr>
+  <tr>
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>Toggle Bidi</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><code>toggle A B</code></td>
+  </tr>
+  <tr style="background-color: #252536;">
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>Separate</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><code>separate A B</code></td>
+  </tr>
+  <tr>
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><b>Curve</b></td>
+    <td style="padding: 10px; border: 1px solid #3a3a50;"><code>curve A B 50</code></td>
+  </tr>
+</table>"""
 
     def _dsl_algorithms(self) -> str:
         return """\
-<h3>Traversal</h3>
-<pre>run bfs from A       # Breadth-first search
-run dfs from A       # Depth-first search</pre>
+<h3>Running Algorithms</h3>
+<p>Execute graph algorithms directly from DSL scripts.</p>
 
-<h3>Shortest Path</h3>
-<pre>run dijkstra from A to B
-run bellman from A to B</pre>
+<h4> Traversal</h4>
+<pre>run bfs from A        # Breadth-first search
+run dfs from A        # Depth-first search</pre>
 
-<h3>Structural Analysis</h3>
-<pre>run mst              # Minimum spanning tree
-run topo             # Topological sort
-run components       # Connected components
-run scc              # Strongly connected components
-run cycle            # Find cycles
-run centrality       # Degree centrality
-run info             # Graph statistics</pre>"""
+<h4> Shortest Path</h4>
+<pre>run dijkstra from A to B    # Dijkstra's algorithm
+run bellman from A to B     # Bellman-Ford algorithm</pre>
+
+<h4> Structural Analysis</h4>
+<pre>run mst               # Minimum spanning tree (undirected)
+run topo              # Topological sort (DAG)
+run components        # Connected components
+run scc               # Strongly connected components
+run cycle             # Find cycles
+run centrality        # Degree centrality
+run info              # Graph statistics</pre>
+
+<h3>Algorithm Output</h3>
+<ul>
+  <li><b>Text results</b> — Printed to output pane</li>
+  <li><b>Node highlights</b> — Affected nodes glow on canvas</li>
+  <li><b>Edge highlights</b> — Path edges highlighted</li>
+  <li><b>Clear with</b> — Click "Clear Highlight" button</li>
+</ul>"""
 
     def _dsl_layout(self) -> str:
         return """\
-<h3>Apply Layout</h3>
-<pre>layout circle        # Circular arrangement
-layout spring        # Force-directed</pre>
+<h3>Layout Commands</h3>
+<p>Automatically arrange nodes using layout algorithms.</p>
 
-<h3>View & Clear</h3>
-<pre>fit                  # Fit view to nodes
-clear                # Remove everything</pre>"""
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #66bb6a;">Circle Layout</h4>
+  <pre>layout circle         # Arrange nodes in circle</pre>
+  <p>Useful for: Cycles, complete graphs, symmetric structures</p>
+</div>
+
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #66bb6a;">Spring Layout</h4>
+  <pre>layout spring         # Force-directed layout</pre>
+  <p>Useful for: General graphs, revealing structure</p>
+</div>
+
+<h3>View Commands</h3>
+<pre>fit                   # Fit view to show all nodes</pre>
+
+<h3>Clear Command</h3>
+<pre>clear                 # Remove all nodes and edges</pre>
+<p>Useful for starting fresh in a script.</p>"""
 
     def _dsl_examples(self) -> str:
         return """\
-<h3>Simple Path Graph</h3>
+<h3>Example Scripts</h3>
+<p>Copy and modify these examples for your own graphs.</p>
+
+<h4> Simple Path Graph</h4>
 <pre>set directed true
 node A at 100 200
 node B at 250 200
@@ -947,7 +1357,7 @@ node C at 400 200
 edge A -> B
 edge B -> C</pre>
 
-<h3>Weighted Cycle</h3>
+<h4> Weighted Cycle</h4>
 <pre>set weighted true
 node 1 at 200 100
 node 2 at 350 200
@@ -960,67 +1370,163 @@ edge 3 -> 4 weight 4
 edge 4 -> 5 weight 2
 edge 5 -> 1 weight 5</pre>
 
-<h3>Complete Script</h3>
+<h4> Complete Graph K5</h4>
+<pre>set directed false
+connect A B C D E
+layout circle</pre>
+
+<h4> Full Analysis Script</h4>
 <pre># Create and analyze a graph
 set directed false
 set weighted true
 
-# Nodes in a pentagon
-node A at 200 100
-node B at 350 200
-node C at 300 350
-node D at 100 350
-node E at 50 200
+# Create nodes in pentagon
+circle 5 radius 150
 
-# Edges with weights
-edge A -- B weight 4
-edge B -- C weight 2
-edge C -- D weight 3
-edge D -- E weight 1
-edge E -- A weight 5
+# Connect as cycle
+cycle v1 v2 v3 v4 v5 weight 1
 
-# Run algorithms
+# Add chords
+edge v1 -- v3 weight 2
+edge v2 -- v4 weight 2
+
+# Run analysis
 run mst
-run bfs from A</pre>"""
+run bfs from v1
+run info</pre>"""
 
     def _shortcuts_modes(self) -> str:
         return """\
-<h3>Modes</h3>
-<table>
-  <tr><td><b>S</b></td><td>Select mode</td></tr>
-  <tr><td><b>N</b></td><td>Add node mode</td></tr>
-  <tr><td><b>E</b></td><td>Add edge mode</td></tr>
-  <tr><td><b>D</b></td><td>Delete mode</td></tr>
-</table>"""
+<h3>Tool Modes</h3>
+<p>Quick-switch between editing modes using keyboard shortcuts.</p>
+
+<table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+  <tr style="background-color: #252536;">
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><code style="font-size: 14px;">S</code></td>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Select Mode</b> — Select and move nodes</td>
+  </tr>
+  <tr>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><code style="font-size: 14px;">N</code></td>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Add Node</b> — Click to place nodes</td>
+  </tr>
+  <tr style="background-color: #252536;">
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><code style="font-size: 14px;">E</code></td>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Add Edge</b> — Click two nodes to connect</td>
+  </tr>
+  <tr>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><code style="font-size: 14px;">D</code></td>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Delete</b> — Click to remove items</td>
+  </tr>
+</table>
+
+<h3>Mode Tips</h3>
+<ul>
+  <li>Current mode shown in status bar</li>
+  <li>Mode icon displayed on cursor</li>
+  <li>Press Esc to cancel current operation</li>
+</ul>"""
 
     def _shortcuts_view(self) -> str:
         return """\
-<h3>View</h3>
-<table>
-  <tr><td><b>F</b></td><td>Fit view</td></tr>
-  <tr><td><b>Ctrl++</b></td><td>Zoom in</td></tr>
-  <tr><td><b>Ctrl+-</b></td><td>Zoom out</td></tr>
-  <tr><td><b>Mouse wheel</b></td><td>Zoom in/out</td></tr>
-  <tr><td><b>Middle drag</b></td><td>Pan view</td></tr>
-</table>"""
+<h3>View Navigation</h3>
+<p>Navigate and adjust the canvas view efficiently.</p>
+
+<table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+  <tr style="background-color: #252536;">
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><code style="font-size: 14px;">F</code></td>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Fit View</b> — Show all nodes</td>
+  </tr>
+  <tr>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><code style="font-size: 14px;">Ctrl +</code></td>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Zoom In</b> — Magnify view</td>
+  </tr>
+  <tr style="background-color: #252536;">
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><code style="font-size: 14px;">Ctrl -</code></td>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Zoom Out</b> — Reduce view</td>
+  </tr>
+  <tr>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Mouse Wheel</b></td>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Zoom</b> — Scroll to zoom in/out</td>
+  </tr>
+  <tr style="background-color: #252536;">
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Middle Drag</b></td>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Pan</b> — Drag to move view</td>
+  </tr>
+</table>
+
+<h3>Zoom Tips</h3>
+<ul>
+  <li>Zoom level shown in status bar</li>
+  <li>Mouse wheel zooms at cursor position</li>
+  <li>Fit View useful after layout changes</li>
+</ul>"""
 
     def _shortcuts_edit(self) -> str:
         return """\
-<h3>Edit</h3>
-<table>
-  <tr><td><b>Ctrl+Z</b></td><td>Undo</td></tr>
-  <tr><td><b>Ctrl+Y</b></td><td>Redo</td></tr>
-  <tr><td><b>Delete</b></td><td>Delete selected</td></tr>
-  <tr><td><b>Ctrl+click</b></td><td>Add to selection</td></tr>
-</table>"""
+<h3>Editing Shortcuts</h3>
+<p>Essential shortcuts for editing operations.</p>
+
+<table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+  <tr style="background-color: #252536;">
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><code style="font-size: 14px;">Ctrl+Z</code></td>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Undo</b> — Reverse last action</td>
+  </tr>
+  <tr>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><code style="font-size: 14px;">Ctrl+Y</code></td>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Redo</b> — Restore undone action</td>
+  </tr>
+  <tr style="background-color: #252536;">
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><code style="font-size: 14px;">Delete</code></td>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Delete</b> — Remove selected items</td>
+  </tr>
+  <tr>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><code style="font-size: 14px;">Ctrl+Click</code></td>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Multi-select</b> — Add to selection</td>
+  </tr>
+  <tr style="background-color: #252536;">
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><code style="font-size: 14px;">Esc</code></td>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Cancel</b> — Clear selection/deselect</td>
+  </tr>
+</table>
+
+<h3>Selection Tips</h3>
+<ul>
+  <li>Selected nodes show highlight glow</li>
+  <li>Drag multiple selected nodes together</li>
+  <li>Click empty space to deselect all</li>
+</ul>"""
 
     def _shortcuts_file(self) -> str:
         return """\
-<h3>File</h3>
-<table>
-  <tr><td><b>Ctrl+N</b></td><td>New graph</td></tr>
-  <tr><td><b>Ctrl+O</b></td><td>Open graph</td></tr>
-  <tr><td><b>Ctrl+S</b></td><td>Save graph</td></tr>
-  <tr><td><b>Ctrl+Shift+S</b></td><td>Save as…</td></tr>
-  <tr><td><b>Ctrl+Q</b></td><td>Quit</td></tr>
-</table>"""
+<h3>File Operations</h3>
+<p>Manage graph files with these shortcuts.</p>
+
+<table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+  <tr style="background-color: #252536;">
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><code style="font-size: 14px;">Ctrl+N</code></td>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>New Graph</b> — Create blank graph</td>
+  </tr>
+  <tr>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><code style="font-size: 14px;">Ctrl+O</code></td>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Open</b> — Load saved graph</td>
+  </tr>
+  <tr style="background-color: #252536;">
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><code style="font-size: 14px;">Ctrl+S</code></td>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Save</b> — Save to current file</td>
+  </tr>
+  <tr>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><code style="font-size: 14px;">Ctrl+Shift+S</code></td>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Save As</b> — Choose new location</td>
+  </tr>
+  <tr style="background-color: #252536;">
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><code style="font-size: 14px;">Ctrl+Q</code></td>
+    <td style="padding: 12px; border: 1px solid #3a3a50;"><b>Quit</b> — Exit application</td>
+  </tr>
+</table>
+
+<h3>File Tips</h3>
+<ul>
+  <li>Auto-save on crash recovery</li>
+  <li>Recent files in File menu</li>
+  <li>Format: JSON (.graph.json)</li>
+</ul>"""
