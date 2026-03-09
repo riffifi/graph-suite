@@ -89,6 +89,7 @@ class Graph:
         self._directed: bool = True
         self._weighted: bool = False
         self._listeners: list[Callable[[GraphEvent, dict[str, Any]], None]] = []
+        self._batch_mode: bool = False  # Disable notifications during bulk operations
 
         # undo / redo
         self._undo_stack: list[dict] = []
@@ -107,8 +108,22 @@ class Graph:
         self._listeners = [l for l in self._listeners if l is not cb]
 
     def _notify(self, event: GraphEvent, **kwargs: Any) -> None:
+        if self._batch_mode:
+            return  # Skip notifications during batch mode
         for cb in self._listeners:
             cb(event, kwargs)
+
+    def begin_batch(self) -> None:
+        """Enter batch mode - disables notifications for bulk operations."""
+        self._batch_mode = True
+
+    def end_batch(self, notify_event: GraphEvent | None = None, **kwargs: Any) -> None:
+        """Exit batch mode and optionally send a single notification."""
+        self._batch_mode = False
+        if notify_event:
+            self._notify(notify_event, **kwargs)
+        # Trigger a single rebuild notification for GUI to refresh
+        self._notify(GraphEvent.GRAPH_REBUILT, **kwargs)
 
     # -- properties --------------------------------------------------------
 
@@ -167,7 +182,7 @@ class Graph:
             name = self.next_node_name()
         if name in self._nodes:
             return self._nodes[name]
-        if record_undo:
+        if record_undo and not self._batch_mode:
             self._save_undo()
         node = Node(name=name, x=x, y=y, color=color)
         self._nodes[name] = node
@@ -214,7 +229,8 @@ class Graph:
 
     def set_node_color(self, name: str, color: str) -> None:
         if name in self._nodes:
-            self._save_undo()
+            if not self._batch_mode:
+                self._save_undo()
             self._nodes[name].color = color
             self._notify(GraphEvent.NODE_COLOR_CHANGED, name=name, color=color)
 
@@ -230,12 +246,21 @@ class Graph:
     # -- edge operations ---------------------------------------------------
 
     def get_edge(self, src: str, tgt: str, edge_id: str | None = None) -> Edge | None:
-        """Get edge between src and tgt. If edge_id is provided, get specific edge."""
+        """Get edge between src and tgt. If edge_id is provided, get specific edge.
+        
+        For parallel edges (multiple edges between same nodes), returns the 
+        **last** edge (most recently added) when edge_id is not specified.
+        This ensures operations like toggle_bidirectional affect the newest edge.
+        """
+        result: Edge | None = None
         for e in self._edges:
             if e.source == src and e.target == tgt:
-                if edge_id is None or e.edge_id == edge_id:
+                if edge_id is not None and e.edge_id == edge_id:
                     return e
-        return None
+                elif edge_id is None:
+                    # Keep updating result to get the last (most recent) edge
+                    result = e
+        return result
 
     def get_edge_by_id(self, edge_id: str) -> Edge | None:
         """Get edge by its unique ID."""
@@ -480,7 +505,11 @@ class Graph:
     # -- adjacency matrix --------------------------------------------------
 
     def get_adjacency_matrix(self, sum_parallel: bool = True) -> tuple[np.ndarray, list[str]]:
-        """Get adjacency matrix. For multigraphs, sum_parallel=True sums weights of parallel edges."""
+        """Get adjacency matrix. For multigraphs, sum_parallel=True sums weights of parallel edges.
+        
+        For directed graphs with bidirectional edges (single edge with arrowheads at both ends),
+        the weight is added to both [i][j] and [j][i] positions.
+        """
         names = list(self._nodes.keys())
         n = len(names)
         idx = {name: i for i, name in enumerate(names)}
@@ -490,22 +519,29 @@ class Graph:
             if i is not None and j is not None:
                 if sum_parallel:
                     mat[i][j] += e.weight
-                    if not self._directed:
+                    # For undirected graphs OR bidirectional edges, also add to reverse position
+                    if not self._directed or e.bidirectional:
                         mat[j][i] += e.weight
                 else:
                     mat[i][j] = e.weight
-                    if not self._directed:
+                    # For undirected graphs OR bidirectional edges, also set reverse position
+                    if not self._directed or e.bidirectional:
                         mat[j][i] = e.weight
         return mat, names
 
     def get_adjacency_list(self) -> dict[str, list[tuple[str, float, str]]]:
         """Get adjacency list with edge weights and edge IDs.
-        Returns: {node_name: [(neighbor, weight, edge_id), ...]}"""
+        Returns: {node_name: [(neighbor, weight, edge_id), ...]}
+        
+        For directed graphs with bidirectional edges, the edge appears in both
+        the source's and target's adjacency lists.
+        """
         adj: dict[str, list[tuple[str, float, str]]] = {name: [] for name in self._nodes}
         for e in self._edges:
             if e.source in adj:
                 adj[e.source].append((e.target, e.weight, e.edge_id))
-            if not self._directed:
+            # For undirected graphs OR bidirectional edges, add to target's list too
+            if not self._directed or e.bidirectional:
                 if e.target in adj:
                     adj[e.target].append((e.source, e.weight, e.edge_id))
         return adj
@@ -537,16 +573,32 @@ class Graph:
     # -- NetworkX bridge ---------------------------------------------------
 
     def to_networkx(self) -> nx.MultiDiGraph | nx.MultiGraph:
-        """Convert to NetworkX MultiGraph (supports parallel edges)."""
+        """Convert to NetworkX MultiGraph (supports parallel edges).
+        
+        For bidirectional edges (single edge with arrowheads at both ends),
+        creates edges in both directions so algorithms work correctly.
+        """
         G = nx.MultiDiGraph() if self._directed else nx.MultiGraph()
         for name, node in self._nodes.items():
             G.add_node(name, x=node.x, y=node.y, color=node.color)
         for e in self._edges:
-            G.add_edge(e.source, e.target, key=e.edge_id, weight=e.weight)
+            # Add forward edge
+            G.add_edge(e.source, e.target, key=e.edge_id, weight=e.weight,
+                       bidirectional=e.bidirectional)
+            # For bidirectional edges, also add reverse edge with related key
+            if e.bidirectional:
+                reverse_key = f"{e.edge_id}_rev"
+                G.add_edge(e.target, e.source, key=reverse_key, weight=e.weight,
+                           bidirectional=True, bidirectional_pair=e.edge_id)
         return G
 
     def from_networkx(self, G: nx.MultiDiGraph | nx.MultiGraph) -> None:
-        """Load graph from NetworkX MultiGraph."""
+        """Load graph from NetworkX MultiGraph.
+        
+        Handles bidirectional edge pairs - if edges exist in both directions
+        with matching bidirectional_pair attributes, they are merged into
+        a single bidirectional edge.
+        """
         self._save_undo()
         self._nodes.clear()
         self._edges.clear()
@@ -557,13 +609,26 @@ class Graph:
                 y=data.get("y", 0.0),
                 color=data.get("color", "#4fc3f7")
             )
+        
+        # Track edges to merge bidirectional pairs
+        added_edges: set[str] = set()
+        
         if G.is_multigraph():
             for u, v, key, data in G.edges(keys=True, data=True):
-                self._edges.append(Edge(
+                # Skip if this is the reverse part of a bidirectional pair
+                pair_id = data.get("bidirectional_pair")
+                if pair_id and pair_id in added_edges:
+                    continue
+                    
+                is_bidi = data.get("bidirectional", False)
+                edge = Edge(
                     source=u, target=v,
                     weight=data.get("weight", 1.0),
-                    edge_id=key
-                ))
+                    edge_id=key if not pair_id else pair_id,
+                    bidirectional=is_bidi
+                )
+                self._edges.append(edge)
+                added_edges.add(key)
         else:
             for u, v, data in G.edges(data=True):
                 self._edges.append(Edge(
@@ -687,6 +752,124 @@ class Graph:
             if name in self._nodes:
                 self._nodes[name].x = float(x)
                 self._nodes[name].y = float(y)
+        self._notify(GraphEvent.GRAPH_REBUILT)
+
+    def layout_hierarchical(self, width: float = 800, height: float = 600,
+                            margin: float = 50, layer_spacing: float = None,
+                            node_spacing: float = 80) -> None:
+        """Hierarchical layout for DAGs - nodes arranged in layers by topological order."""
+        if len(self._nodes) == 0:
+            return
+        
+        self._save_undo()
+        G = self.to_networkx()
+        
+        # Try topological sort for DAGs, fall back to BFS layers
+        try:
+            layers = list(nx.topological_generations(G))
+        except nx.NetworkXUnfeasible:
+            # Not a DAG - use BFS layers from first node
+            if len(G) > 0:
+                start = list(G.nodes())[0]
+                layers = list(nx.bfs_layers(G, start))
+            else:
+                layers = []
+        
+        if not layers:
+            return
+        
+        # Calculate layer positions
+        if layer_spacing is None:
+            layer_spacing = height / (len(layers) + 1)
+        
+        max_layer_width = max(len(layer) for layer in layers)
+        
+        for layer_idx, layer in enumerate(layers):
+            # Sort nodes in layer by name for consistency
+            sorted_nodes = sorted(layer)
+            layer_size = len(sorted_nodes)
+            
+            # Calculate x positions
+            if layer_size == 1:
+                x_positions = [width / 2]
+            else:
+                total_width = (layer_size - 1) * node_spacing
+                start_x = (width - total_width) / 2
+                x_positions = [start_x + i * node_spacing for i in range(layer_size)]
+            
+            y_pos = margin + layer_idx * layer_spacing
+            
+            for node_idx, node_name in enumerate(sorted_nodes):
+                if node_name in self._nodes:
+                    self._nodes[node_name].x = x_positions[node_idx]
+                    self._nodes[node_name].y = y_pos
+        
+        self._notify(GraphEvent.GRAPH_REBUILT)
+
+    def layout_grid(self, width: float = 800, height: float = 600,
+                    margin: float = 50, spacing: float = None) -> None:
+        """Grid/orthogonal layout - nodes arranged in a rectangular grid."""
+        if len(self._nodes) == 0:
+            return
+        
+        self._save_undo()
+        names = list(self._nodes.keys())
+        n = len(names)
+        
+        # Calculate grid dimensions (try to make it square-ish)
+        cols = math.ceil(math.sqrt(n))
+        rows = math.ceil(n / cols)
+        
+        if spacing is None:
+            available_width = width - 2 * margin
+            available_height = height - 2 * margin
+            spacing = min(available_width / max(cols, 1),
+                         available_height / max(rows, 1), 100)
+        
+        # Calculate starting position to center the grid
+        grid_width = (cols - 1) * spacing
+        grid_height = (rows - 1) * spacing
+        start_x = (width - grid_width) / 2
+        start_y = (height - grid_height) / 2
+        
+        for i, name in enumerate(names):
+            row = i // cols
+            col = i % cols
+            if name in self._nodes:
+                self._nodes[name].x = start_x + col * spacing
+                self._nodes[name].y = start_y + row * spacing
+        
+        self._notify(GraphEvent.GRAPH_REBUILT)
+
+    def layout_spectral(self, width: float = 800, height: float = 600,
+                        margin: float = 50) -> None:
+        """Spectral layout using eigenvectors of the graph Laplacian."""
+        if len(self._nodes) < 2:
+            self.layout_grid(width, height, margin)
+            return
+        
+        self._save_undo()
+        G = self.to_networkx()
+        
+        try:
+            # Get spectral layout from networkx
+            pos = nx.spectral_layout(G, scale=min(width, height) * 0.4)
+            
+            # Center the layout
+            if pos:
+                x_vals = [p[0] for p in pos.values()]
+                y_vals = [p[1] for p in pos.values()]
+                x_center = (max(x_vals) + min(x_vals)) / 2
+                y_center = (max(y_vals) + min(y_vals)) / 2
+                
+                for name, (x, y) in pos.items():
+                    if name in self._nodes:
+                        self._nodes[name].x = float(x - x_center + width / 2)
+                        self._nodes[name].y = float(y - y_center + height / 2)
+        except (nx.NetworkXError, Exception):
+            # Fall back to grid layout on error
+            self.layout_grid(width, height, margin)
+        
         self._notify(GraphEvent.GRAPH_REBUILT)
 
     def __len__(self) -> int:

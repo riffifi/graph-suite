@@ -42,7 +42,7 @@ ALGORITHMS = [
 class AlgorithmPanel(QWidget):
     """Run graph algorithms and show results, with canvas highlighting."""
 
-    highlight_request = Signal(set, set)  # nodes, edges
+    highlight_request = Signal(set, set)  # nodes, edge_ids
     clear_highlight = Signal()
 
     def __init__(self, graph: Graph, parent: QWidget | None = None) -> None:

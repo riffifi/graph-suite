@@ -8,7 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QAction, QKeySequence, QIcon, QPixmap, QPainter, QColor, QActionGroup
 from PySide6.QtWidgets import (
-    QMainWindow, QToolBar, QDockWidget, QFileDialog,
+    QMainWindow, QMenu, QToolBar, QDockWidget, QFileDialog,
     QMessageBox, QStatusBar, QToolButton, QWidget,
     QLabel, QDialog, QVBoxLayout, QHBoxLayout, QTextEdit, QTabWidget,
     QScrollArea, QFrame, QPushButton,
@@ -18,6 +18,7 @@ from graphsuite.core.graph import Graph, GraphEvent
 from graphsuite.gui.canvas import GraphCanvas, CanvasMode
 from graphsuite.gui.matrix_editor import MatrixEditor
 from graphsuite.gui.algorithm_panel import AlgorithmPanel
+from graphsuite.gui.analysis_panel import AnalysisPanel
 from graphsuite.gui.style import Colors, STYLESHEET
 from graphsuite.dsl.engine import DSLConsole
 
@@ -38,6 +39,7 @@ class MainWindow(QMainWindow):
         self.canvas = GraphCanvas(self.graph)
         self.matrix_editor = MatrixEditor(self.graph)
         self.algo_panel = AlgorithmPanel(self.graph)
+        self.analysis_panel = AnalysisPanel(self.graph)
         self.dsl_console = DSLConsole(self.graph)
 
         # Wire cross-component signals
@@ -45,6 +47,8 @@ class MainWindow(QMainWindow):
         self.dsl_console.highlight_request.connect(self.canvas.set_highlight)
         self.dsl_console.clear_highlight.connect(self.canvas.clear_highlight)
         self.dsl_console.fit_request.connect(self.canvas.fit_view)
+        # Connect canvas highlight to matrix editor
+        self.canvas.highlight_changed.connect(self.matrix_editor.set_highlight)
 
         # Central widget
         self.setCentralWidget(self.canvas)
@@ -77,8 +81,29 @@ class MainWindow(QMainWindow):
         file_menu.addAction(
             self._action("Save &As…", "Ctrl+Shift+S", self._file_save_as))
         file_menu.addSeparator()
-        file_menu.addAction(
-            self._action("Export &PNG…", "", self._export_png))
+        
+        # Import submenu
+        import_menu = file_menu.addMenu("&Import")
+        import_menu.addAction(
+            self._action("GraphML…", "", self._import_graphml))
+        import_menu.addAction(
+            self._action("DOT/Graphviz…", "", self._import_dot))
+        import_menu.addAction(
+            self._action("CSV Edge List…", "", self._import_csv))
+        
+        # Export submenu
+        export_menu = file_menu.addMenu("&Export")
+        export_menu.addAction(
+            self._action("PNG Image…", "", self._export_png))
+        export_menu.addAction(
+            self._action("SVG Image…", "", self._export_svg))
+        export_menu.addAction(
+            self._action("GraphML…", "", self._export_graphml))
+        export_menu.addAction(
+            self._action("DOT/Graphviz…", "", self._export_dot))
+        export_menu.addAction(
+            self._action("CSV Edge List…", "", self._export_csv))
+        
         file_menu.addSeparator()
         file_menu.addAction(
             self._action("&Quit", "Ctrl+Q", self.close))
@@ -89,6 +114,11 @@ class MainWindow(QMainWindow):
             self._action("&Undo", "Ctrl+Z", self.graph.undo))
         edit_menu.addAction(
             self._action("&Redo", "Ctrl+Y", self.graph.redo))
+        edit_menu.addSeparator()
+        edit_menu.addAction(
+            self._action("&Find Node…", "Ctrl+F", self._find_node))
+        edit_menu.addAction(
+            self._action("Find &Path…", "Ctrl+P", self._find_path))
         edit_menu.addSeparator()
         edit_menu.addAction(
             self._action("Clear &Graph", "", self._clear_graph))
@@ -106,10 +136,21 @@ class MainWindow(QMainWindow):
         graph_menu.addAction(self._act_weighted)
 
         graph_menu.addSeparator()
-        graph_menu.addAction(
-            self._action("Circle Layout", "", self._layout_circle))
-        graph_menu.addAction(
-            self._action("Spring Layout", "", self._layout_spring))
+        
+        # Layout submenu
+        layout_menu = graph_menu.addMenu("Layout")
+        layout_menu.addAction(
+            self._action("Circle", "", self._layout_circle))
+        layout_menu.addAction(
+            self._action("Spring", "", self._layout_spring))
+        layout_menu.addAction(
+            self._action("Hierarchical", "", self._layout_hierarchical))
+        layout_menu.addAction(
+            self._action("Grid", "", self._layout_grid))
+        layout_menu.addAction(
+            self._action("Spectral", "", self._layout_spectral))
+        
+        graph_menu.addSeparator()
         graph_menu.addAction(
             self._action("Fit View", "F",
                          self.canvas.fit_view))
@@ -179,16 +220,19 @@ class MainWindow(QMainWindow):
 
         tb.addSeparator()
 
-        # Layout buttons
-        act_circle = QAction("Circle", self)
-        act_circle.setToolTip("Circle layout")
-        act_circle.triggered.connect(self._layout_circle)
-        tb.addAction(act_circle)
-
-        act_spring = QAction("Spring", self)
-        act_spring.setToolTip("Spring layout")
-        act_spring.triggered.connect(self._layout_spring)
-        tb.addAction(act_spring)
+        # Layout submenu button (contains Circle, Spring, Hierarchical, Grid, Spectral)
+        layout_btn = QToolButton()
+        layout_btn.setText("Layout")
+        layout_btn.setToolTip("Layout options")
+        layout_menu = QMenu(self)
+        layout_menu.addAction("Circle", self._layout_circle)
+        layout_menu.addAction("Spring", self._layout_spring)
+        layout_menu.addAction("Hierarchical", self._layout_hierarchical)
+        layout_menu.addAction("Grid", self._layout_grid)
+        layout_menu.addAction("Spectral", self._layout_spectral)
+        layout_btn.setMenu(layout_menu)
+        layout_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        tb.addWidget(layout_btn)
 
         act_fit = QAction("Fit", self)
         act_fit.setToolTip("Fit all nodes in view")
@@ -220,14 +264,14 @@ class MainWindow(QMainWindow):
 
         tb.addSeparator()
 
-        # Undo / Redo
+        # Undo / Redo (no shortcuts - already in Edit menu)
         act_undo = QAction("Undo", self)
-        act_undo.setShortcut(QKeySequence("Ctrl+Z"))
+        act_undo.setToolTip("Undo (Ctrl+Z)")
         act_undo.triggered.connect(self.graph.undo)
         tb.addAction(act_undo)
 
         act_redo = QAction("Redo", self)
-        act_redo.setShortcut(QKeySequence("Ctrl+Y"))
+        act_redo.setToolTip("Redo (Ctrl+Y)")
         act_redo.triggered.connect(self.graph.redo)
         tb.addAction(act_redo)
 
@@ -249,6 +293,14 @@ class MainWindow(QMainWindow):
         algo_dock.setMinimumWidth(250)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, algo_dock)
         self.tabifyDockWidget(matrix_dock, algo_dock)
+        
+        # Analysis panel – right (tabbed with algorithms)
+        analysis_dock = QDockWidget("Analysis", self)
+        analysis_dock.setWidget(self.analysis_panel)
+        analysis_dock.setMinimumWidth(300)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, analysis_dock)
+        self.tabifyDockWidget(algo_dock, analysis_dock)
+        
         matrix_dock.raise_()
 
         # DSL console – bottom
@@ -260,6 +312,7 @@ class MainWindow(QMainWindow):
         # Add toggle actions to View menu
         self._view_menu.addAction(matrix_dock.toggleViewAction())
         self._view_menu.addAction(algo_dock.toggleViewAction())
+        self._view_menu.addAction(analysis_dock.toggleViewAction())
         self._view_menu.addAction(dsl_dock.toggleViewAction())
 
     # ── Status bar ────────────────────────────────────────────────────────
@@ -320,6 +373,21 @@ class MainWindow(QMainWindow):
 
     def _layout_spring(self) -> None:
         self.graph.layout_spring(
+            width=self.canvas.width(), height=self.canvas.height())
+        self.canvas.fit_view()
+
+    def _layout_hierarchical(self) -> None:
+        self.graph.layout_hierarchical(
+            width=self.canvas.width(), height=self.canvas.height())
+        self.canvas.fit_view()
+
+    def _layout_grid(self) -> None:
+        self.graph.layout_grid(
+            width=self.canvas.width(), height=self.canvas.height())
+        self.canvas.fit_view()
+
+    def _layout_spectral(self) -> None:
+        self.graph.layout_spectral(
             width=self.canvas.width(), height=self.canvas.height())
         self.canvas.fit_view()
 
@@ -394,6 +462,144 @@ class MainWindow(QMainWindow):
             pixmap = self.canvas.grab()
             pixmap.save(path, "PNG")
             self._status.showMessage(f"Exported to {path}", 3000)
+
+    def _export_svg(self) -> None:
+        from graphsuite.core.io import GraphIO
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export SVG", "graph.svg",
+            "SVG Image (*.svg);;All Files (*)")
+        if path:
+            if GraphIO.export_svg(self.graph, path):
+                self._status.showMessage(f"Exported to {path}", 3000)
+
+    def _export_graphml(self) -> None:
+        from graphsuite.core.io import GraphIO
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export GraphML", "graph.graphml",
+            "GraphML (*.graphml);;All Files (*)")
+        if path:
+            try:
+                with open(path, 'w') as f:
+                    f.write(GraphIO.to_graphml(self.graph))
+                self._status.showMessage(f"Exported to {path}", 3000)
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", str(e))
+
+    def _export_dot(self) -> None:
+        from graphsuite.core.io import GraphIO
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export DOT", "graph.dot",
+            "DOT/Graphviz (*.dot);;All Files (*)")
+        if path:
+            try:
+                with open(path, 'w') as f:
+                    f.write(GraphIO.to_dot(self.graph))
+                self._status.showMessage(f"Exported to {path}", 3000)
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", str(e))
+
+    def _export_csv(self) -> None:
+        from graphsuite.core.io import GraphIO
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export CSV", "graph.csv",
+            "CSV Edge List (*.csv);;All Files (*)")
+        if path:
+            try:
+                with open(path, 'w') as f:
+                    f.write(GraphIO.to_csv_edge_list(self.graph))
+                self._status.showMessage(f"Exported to {path}", 3000)
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", str(e))
+
+    def _import_graphml(self) -> None:
+        from graphsuite.core.io import GraphIO
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import GraphML", "",
+            "GraphML (*.graphml);;All Files (*)")
+        if path:
+            try:
+                with open(path, 'r') as f:
+                    GraphIO.from_graphml(f.read(), self.graph)
+                self._current_file = path
+                self.canvas.fit_view()
+                self._status.showMessage(f"Imported from {path}", 3000)
+            except Exception as e:
+                QMessageBox.critical(self, "Import Error", str(e))
+
+    def _import_dot(self) -> None:
+        from graphsuite.core.io import GraphIO
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import DOT", "",
+            "DOT/Graphviz (*.dot);;All Files (*)")
+        if path:
+            try:
+                with open(path, 'r') as f:
+                    GraphIO.from_dot(f.read(), self.graph)
+                self._current_file = path
+                self.canvas.fit_view()
+                self._status.showMessage(f"Imported from {path}", 3000)
+            except Exception as e:
+                QMessageBox.critical(self, "Import Error", str(e))
+
+    def _import_csv(self) -> None:
+        from graphsuite.core.io import GraphIO
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import CSV", "",
+            "CSV Edge List (*.csv);;All Files (*)")
+        if path:
+            try:
+                with open(path, 'r') as f:
+                    GraphIO.from_csv_edge_list(f.read(), self.graph)
+                self.canvas.fit_view()
+                self._status.showMessage(f"Imported from {path}", 3000)
+            except Exception as e:
+                QMessageBox.critical(self, "Import Error", str(e))
+
+    # ── Search & Filter ──────────────────────────────────────────────────
+
+    def _find_node(self) -> None:
+        """Show find node dialog."""
+        dialog = FindNodeDialog(self, self.graph)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            result = dialog.get_result()
+            if result:
+                node_name = result.get('node')
+                if node_name and node_name in self.graph.nodes:
+                    # Highlight and center on node
+                    node = self.graph.nodes[node_name]
+                    self.canvas.center_on(node.x, node.y)
+                    self.canvas.set_highlight({node_name}, set())
+                    self._status.showMessage(f"Found: {node_name}", 3000)
+
+    def _find_path(self) -> None:
+        """Show find path dialog."""
+        import networkx as nx
+        dialog = FindPathDialog(self, list(self.graph.nodes.keys()))
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            result = dialog.get_result()
+            if result:
+                source = result.get('source')
+                target = result.get('target')
+                if source and target:
+                    G = self.graph.to_networkx()
+                    try:
+                        if self.graph.weighted:
+                            path = nx.dijkstra_path(G, source, target, weight='weight')
+                            cost = nx.dijkstra_path_length(G, source, target, weight='weight')
+                        else:
+                            path = nx.shortest_path(G, source, target)
+                            cost = len(path) - 1
+                        
+                        # Highlight path
+                        highlight_nodes = set(path)
+                        highlight_edges = set()
+                        for i in range(len(path) - 1):
+                            highlight_edges.add((path[i], path[i+1]))
+                        
+                        self.canvas.set_highlight(highlight_nodes, highlight_edges)
+                        self._status.showMessage(f"Path found: {' → '.join(path)} (cost={cost})", 5000)
+                    except (nx.NetworkXNoPath, nx.NodeNotFound) as e:
+                        QMessageBox.warning(self, "No Path", f"No path found: {e}")
 
     # ── Help ──────────────────────────────────────────────────────────────
 
@@ -498,12 +704,16 @@ class HelpDialog(QDialog):
                 line-height: 1.6;
             }
             h2 { color: #7c4dff; font-size: 24px; margin-bottom: 15px; border-bottom: 1px solid #3a3a50; padding-bottom: 10px; }
-            h3 { color: #4fc3f7; font-size: 16px; margin-top: 20px; margin-bottom: 10px; }
-            p { margin: 10px 0; line-height: 1.7; }
-            ul, ol { margin: 10px 0; padding-left: 25px; }
-            li { margin: 6px 0; }
-            code { background-color: #2a2a3c; padding: 2px 6px; border-radius: 3px; color: #66bb6a; }
-            pre { background-color: #252536; padding: 15px; border-radius: 6px; overflow-x: auto; }
+            h3 { color: #4fc3f7; font-size: 18px; margin-top: 25px; margin-bottom: 12px; }
+            h4 { color: #66bb6a; font-size: 15px; margin-top: 18px; margin-bottom: 8px; }
+            p { margin: 12px 0; line-height: 1.8; }
+            ul, ol { margin: 12px 0; padding-left: 28px; }
+            li { margin: 8px 0; line-height: 1.6; }
+            code { background-color: #2a2a3c; padding: 3px 8px; border-radius: 4px; color: #66bb6a; font-family: "JetBrains Mono", "Fira Code", monospace; font-size: 13px; }
+            pre { background: linear-gradient(135deg, #252536 0%, #1f1f2e 100%); padding: 18px; border-radius: 8px; overflow-x: auto; border: 1px solid #3a3a50; margin: 15px 0; }
+            .tip { background: linear-gradient(135deg, #252536 0%, #1f1f2e 100%); padding: 15px; border-radius: 8px; border-left: 4px solid #7c4dff; margin: 18px 0; }
+            .warning { background: linear-gradient(135deg, #3d2f2f 0%, #2e1f1f 100%); padding: 15px; border-radius: 8px; border-left: 4px solid #ef5350; margin: 18px 0; }
+            .info { background: linear-gradient(135deg, #1f2f3d 0%, #1f2a2e 100%); padding: 15px; border-radius: 8px; border-left: 4px solid #4fc3f7; margin: 18px 0; }
         """)
 
         layout.addWidget(sidebar, 0)
@@ -544,12 +754,17 @@ class HelpDialog(QDialog):
                 line-height: 1.6;
             }
             h2 { color: #7c4dff; font-size: 24px; margin-bottom: 15px; border-bottom: 1px solid #3a3a50; padding-bottom: 10px; }
-            h3 { color: #4fc3f7; font-size: 16px; margin-top: 20px; margin-bottom: 10px; }
-            p { margin: 10px 0; line-height: 1.7; }
-            ul, ol { margin: 10px 0; padding-left: 25px; }
-            li { margin: 6px 0; }
-            code { background-color: #2a2a3c; padding: 2px 6px; border-radius: 3px; color: #66bb6a; }
-            pre { background-color: #252536; padding: 15px; border-radius: 6px; overflow-x: auto; font-family: "JetBrains Mono", "Fira Code", monospace; font-size: 13px; }
+            h3 { color: #4fc3f7; font-size: 18px; margin-top: 25px; margin-bottom: 12px; }
+            h4 { color: #66bb6a; font-size: 15px; margin-top: 18px; margin-bottom: 8px; }
+            p { margin: 12px 0; line-height: 1.8; }
+            ul, ol { margin: 12px 0; padding-left: 28px; }
+            li { margin: 8px 0; line-height: 1.6; }
+            code { background-color: #2a2a3c; padding: 3px 8px; border-radius: 4px; color: #66bb6a; font-family: "JetBrains Mono", "Fira Code", monospace; font-size: 13px; }
+            pre { background: linear-gradient(135deg, #252536 0%, #1f1f2e 100%); padding: 18px; border-radius: 8px; overflow-x: auto; border: 1px solid #3a3a50; margin: 15px 0; font-family: "JetBrains Mono", "Fira Code", monospace; font-size: 13px; }
+            .tip { background: linear-gradient(135deg, #252536 0%, #1f1f2e 100%); padding: 15px; border-radius: 8px; border-left: 4px solid #7c4dff; margin: 18px 0; }
+            .warning { background: linear-gradient(135deg, #3d2f2f 0%, #2e1f1f 100%); padding: 15px; border-radius: 8px; border-left: 4px solid #ef5350; margin: 18px 0; }
+            .info { background: linear-gradient(135deg, #1f2f3d 0%, #1f2a2e 100%); padding: 15px; border-radius: 8px; border-left: 4px solid #4fc3f7; margin: 18px 0; }
+            .syntax { background-color: #1a1a2e; padding: 12px; border-radius: 6px; border: 1px solid #3a3a50; margin: 12px 0; font-family: "JetBrains Mono", monospace; font-size: 13px; }
         """)
 
         layout.addWidget(sidebar, 0)
@@ -636,16 +851,13 @@ class HelpDialog(QDialog):
         for i, (title, content) in enumerate(sections):
             btn = QPushButton(f"  {title}")
             btn.setCheckable(True)
-            btn.clicked.connect(lambda checked, idx=i: self._on_section_clicked(idx))
+            btn.setChecked(i == 0)  # First button checked by default
+            btn.clicked.connect(lambda checked, idx=i: self._on_section_clicked(idx) if checked else None)
             layout.addWidget(btn)
             self._sidebar_buttons.append(btn)
             content_list.append(content)
 
         layout.addStretch()
-
-        # Select first button
-        if self._sidebar_buttons:
-            self._sidebar_buttons[0].setChecked(True)
 
         return sidebar
 
@@ -682,52 +894,72 @@ class HelpDialog(QDialog):
 
     def _tutorial_getting_started(self) -> str:
         return """\
-<p>Welcome to <b>Graph Suite</b> — a powerful, intuitive tool for creating, editing, and analyzing graphs. 
-This tutorial will guide you through everything you need to know.</p>
+<div style="text-align: center; padding: 30px 0;">
+    <h1 style="color: #7c4dff; font-size: 32px; margin-bottom: 10px;">Welcome to Graph Suite</h1>
+    <p style="color: #8888a0; font-size: 16px;">Your professional tool for creating, editing, and analyzing graphs</p>
+</div>
 
-<div style="background-color: #252536; padding: 15px; border-radius: 6px; border-left: 4px solid #7c4dff; margin: 15px 0;">
-  <h4 style="margin-top: 0; color: #4fc3f7;"> Quick Start</h4>
-  <ol style="margin: 10px 0;">
-    <li>Press <b>N</b> and click to add nodes</li>
-    <li>Press <b>E</b> and click two nodes to connect them</li>
-    <li>Press <b>S</b> to select and drag nodes</li>
-    <li>Run algorithms from the right panel</li>
-  </ol>
+<div class="tip">
+    <h4 style="margin-top: 0; color: #4fc3f7;">Quick Start — Create Your First Graph in 30 Seconds</h4>
+    <ol style="margin: 10px 0;">
+        <li>Press <code>N</code> and click twice on the canvas to create two nodes</li>
+        <li>Press <code>E</code> and click both nodes to connect them</li>
+        <li>Press <code>S</code> to drag nodes around</li>
+        <li>Open the Algorithms panel to run BFS, DFS, or Dijkstra</li>
+    </ol>
 </div>
 
 <h3>The Interface</h3>
-<table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
-  <tr style="background-color: #252536;">
-    <td style="padding: 10px; border: 1px solid #3a3a50;"><b> Canvas</b></td>
-    <td style="padding: 10px; border: 1px solid #3a3a50;">Main workspace for creating and editing graphs</td>
-  </tr>
-  <tr>
-    <td style="padding: 10px; border: 1px solid #3a3a50;"><b> Toolbar</b></td>
-    <td style="padding: 10px; border: 1px solid #3a3a50;">Quick access to tools, modes, and commands</td>
-  </tr>
-  <tr style="background-color: #252536;">
-    <td style="padding: 10px; border: 1px solid #3a3a50;"><b> Matrices</b></td>
-    <td style="padding: 10px; border: 1px solid #3a3a50;">Edit graph structure as adjacency/incidence matrices</td>
-  </tr>
-  <tr>
-    <td style="padding: 10px; border: 1px solid #3a3a50;"><b> Algorithms</b></td>
-    <td style="padding: 10px; border: 1px solid #3a3a50;">Run BFS, DFS, Dijkstra, MST, and more</td>
-  </tr>
-  <tr style="background-color: #252536;">
-    <td style="padding: 10px; border: 1px solid #3a3a50;"><b> DSL Console</b></td>
-    <td style="padding: 10px; border: 1px solid #3a3a50;">Write scripts to automate graph creation</td>
-  </tr>
+<table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+    <tr style="background-color: #252536;">
+        <td style="padding: 14px; border: 1px solid #3a3a50; width: 30%;"><b>Canvas</b></td>
+        <td style="padding: 14px; border: 1px solid #3a3a50;">Your main workspace. Drag to pan, scroll to zoom, click to create.</td>
+    </tr>
+    <tr>
+        <td style="padding: 14px; border: 1px solid #3a3a50;"><b>Toolbar</b></td>
+        <td style="padding: 14px; border: 1px solid #3a3a50;">Quick access to tools, layouts, and graph properties.</td>
+    </tr>
+    <tr style="background-color: #252536;">
+        <td style="padding: 14px; border: 1px solid #3a3a50;"><b>Matrices Panel</b></td>
+        <td style="padding: 14px; border: 1px solid #3a3a50;">Edit graph structure using adjacency or incidence matrices.</td>
+    </tr>
+    <tr>
+        <td style="padding: 14px; border: 1px solid #3a3a50;"><b>Algorithms Panel</b></td>
+        <td style="padding: 14px; border: 1px solid #3a3a50;">Run graph algorithms with visual highlighting of results.</td>
+    </tr>
+    <tr style="background-color: #252536;">
+        <td style="padding: 14px; border: 1px solid #3a3a50;"><b>DSL Console</b></td>
+        <td style="padding: 14px; border: 1px solid #3a3a50;">Script complex graphs using our domain-specific language.</td>
+    </tr>
 </table>
 
 <h3>Essential Shortcuts</h3>
-<ul>
-  <li><code>S</code> — Select mode</li>
-  <li><code>N</code> — Add node mode</li>
-  <li><code>E</code> — Add edge mode</li>
-  <li><code>D</code> — Delete mode</li>
-  <li><code>F</code> — Fit view to graph</li>
-  <li><code>Ctrl+Z/Y</code> — Undo/Redo</li>
-</ul>"""
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 20px 0;">
+    <div class="info" style="margin: 0;">
+        <h4 style="margin-top: 0;">Modes</h4>
+        <ul style="margin: 10px 0;">
+            <li><code>S</code> — Select</li>
+            <li><code>N</code> — Add Node</li>
+            <li><code>E</code> — Add Edge</li>
+            <li><code>D</code> — Delete</li>
+        </ul>
+    </div>
+    <div class="info" style="margin: 0;">
+        <h4 style="margin-top: 0;">View & Edit</h4>
+        <ul style="margin: 10px 0;">
+            <li><code>F</code> — Fit View</li>
+            <li><code>Ctrl+Z</code> — Undo</li>
+            <li><code>Ctrl+Y</code> — Redo</li>
+            <li><code>Del</code> — Delete Selected</li>
+        </ul>
+    </div>
+</div>
+
+<div class="tip">
+    <h4 style="margin-top: 0; color: #66bb6a;">Pro Tip</h4>
+    <p style="margin: 10px 0;">Hold <code>Shift</code> while creating edges to make parallel edges. Hold <code>Ctrl</code> to curve edges by dragging their midpoint handle.</p>
+</div>
+"""
 
     def _tutorial_nodes(self) -> str:
         return """\
@@ -1262,13 +1494,15 @@ edge A -- B weight 3    # Weighted undirected</pre>
 </div>
 
 <h3>Multiple Edges</h3>
-<pre>edges A B C -> D      # Multiple sources to one target
-edges A B -> C D      # Multiple to multiple (creates all)</pre>
+<pre>edges A B C -> D      # Multiple sources to one target</pre>
 
 <h3>Edge Patterns</h3>
 <pre>path A B C D          # Chain: A→B→C→D
-cycle A B C D         # Cycle: A→B→C→D→A
-connect A B C D       # Complete graph (all pairs)</pre>
+cycle A B C D         # Cycle: A→B→C→D→A (nodes in circle)
+connect A B C D       # Complete graph (all pairs)
+star C A B D          # Star: center C connected to A, B, D
+wheel C A B D         # Wheel: cycle + center connected to all
+ladder L 5            # Ladder with 5 rungs</pre>
 
 <h3>Edge Operations</h3>
 <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
@@ -1337,6 +1571,34 @@ run info              # Graph statistics</pre>
   <p>Useful for: General graphs, revealing structure</p>
 </div>
 
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #66bb6a;">Hierarchical Layout</h4>
+  <pre>layout hierarchical   # Layered by topological order</pre>
+  <p>Useful for: DAGs, trees, flowcharts, dependency graphs</p>
+</div>
+
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #66bb6a;">Grid Layout</h4>
+  <pre>layout grid           # Rectangular grid arrangement</pre>
+  <p>Useful for: Mesh graphs, regular structures</p>
+</div>
+
+<div style="background-color: #252536; padding: 15px; border-radius: 6px; margin: 15px 0;">
+  <h4 style="margin-top: 0; color: #66bb6a;">Spectral Layout</h4>
+  <pre>layout spectral       # Eigenvector-based positioning</pre>
+  <p>Useful for: Community detection visualization, clustering</p>
+</div>
+
+<h3>Structural Layout Commands</h3>
+<p>These commands create nodes in specific patterns:</p>
+<pre>grid 3 4                # 3 rows, 4 columns
+grid 4 5 spacing 100    # Custom spacing
+circle 6                # 6 nodes in circle
+circle 8 radius 200     # Custom radius
+star C A B D E          # Center + outer nodes
+wheel C A B D E F       # Cycle + center
+ladder L 5              # Ladder with 5 rungs</pre>
+
 <h3>View Commands</h3>
 <pre>fit                   # Fit view to show all nodes</pre>
 
@@ -1347,53 +1609,82 @@ run info              # Graph statistics</pre>
     def _dsl_examples(self) -> str:
         return """\
 <h3>Example Scripts</h3>
-<p>Copy and modify these examples for your own graphs.</p>
+<p>Copy, paste, and modify these examples. Run them in the DSL Console at the bottom of the window.</p>
 
-<h4> Simple Path Graph</h4>
-<pre>set directed true
+<div class="tip">
+    <h4 style="margin-top: 0; color: #4fc3f7;">Tip</h4>
+    <p style="margin: 10px 0;">Load <code>beautiful_graphs.dsl</code> from the File menu to see complex graph patterns created with the DSL!</p>
+</div>
+
+<h4>Simple Path Graph</h4>
+<div class="syntax">set directed true
 node A at 100 200
-node B at 250 200
+node B at 250 200  
 node C at 400 200
 edge A -> B
-edge B -> C</pre>
+edge B -> C</div>
 
-<h4> Weighted Cycle</h4>
-<pre>set weighted true
-node 1 at 200 100
-node 2 at 350 200
-node 3 at 300 350
-node 4 at 100 350
-node 5 at 50 200
-edge 1 -> 2 weight 3
-edge 2 -> 3 weight 1
-edge 3 -> 4 weight 4
-edge 4 -> 5 weight 2
-edge 5 -> 1 weight 5</pre>
+<h4>Uniform Cycle (Polygon)</h4>
+<div class="syntax"># Creates nodes in a perfect circle, evenly spaced
+cycle A B C D E weight 1
 
-<h4> Complete Graph K5</h4>
-<pre>set directed false
+# Or use numbered nodes
+cycle v1 v2 v3 v4 v5 v6 weight 2</div>
+<p>The <code>cycle</code> command automatically positions nodes in a perfect circle with uniform spacing!</p>
+
+<h4>Weighted Cycle with Custom Weights</h4>
+<div class="syntax">set weighted true
+cycle A B C D weight 1
+
+# Modify individual edge weights
+edge A -> B weight 5
+edge B -> C weight 3</div>
+
+<h4>Complete Graph K5</h4>
+<div class="syntax">set directed false
 connect A B C D E
-layout circle</pre>
+layout circle</div>
 
-<h4> Full Analysis Script</h4>
-<pre># Create and analyze a graph
-set directed false
+<h4>Ladder Graph</h4>
+<div class="syntax"># Creates a ladder with 5 rungs
+ladder R 5 weight 1
+layout spring</div>
+
+<h4>Star Graph</h4>
+<div class="syntax"># Center connected to all outer nodes
+node CENTER at 400 300
+star CENTER A B C D E</div>
+
+<h4>Wheel Graph</h4>
+<div class="syntax"># Cycle with center connected to all
+wheel C A B D E F
+layout circle</div>
+
+<h4>Iterative Patterns</h4>
+<div class="syntax"># Create 10 nodes in a row
+iter i in 1..10: node N{i} at 100 200
+
+# Create edges between consecutive nodes  
+iter i in 1..9: edge N{i} -> N{i+1} weight 1</div>
+
+<h4>Full Analysis Workflow</h4>
+<div class="syntax"># Create a weighted undirected graph
 set weighted true
+set directed false
 
-# Create nodes in pentagon
-circle 5 radius 150
-
-# Connect as cycle
+# Create pentagon cycle
 cycle v1 v2 v3 v4 v5 weight 1
 
-# Add chords
+# Add internal connections (star pattern)
 edge v1 -- v3 weight 2
 edge v2 -- v4 weight 2
+edge v3 -- v5 weight 2
 
-# Run analysis
+# Run algorithms
 run mst
 run bfs from v1
-run info</pre>"""
+run info</div>
+"""
 
     def _shortcuts_modes(self) -> str:
         return """\
@@ -1530,3 +1821,134 @@ run info</pre>"""
   <li>Recent files in File menu</li>
   <li>Format: JSON (.graph.json)</li>
 </ul>"""
+
+
+class FindNodeDialog(QDialog):
+    """Dialog for finding a node by name or regex pattern."""
+
+    def __init__(self, parent, graph: Graph) -> None:
+        super().__init__(parent)
+        self.graph = graph
+        self._result = None
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        self.setWindowTitle("Find Node")
+        self.setMinimumWidth(400)
+        layout = QVBoxLayout(self)
+
+        # Search input
+        layout.addWidget(QLabel("Search by name (supports regex):"))
+        self._search = QTextEdit()
+        self._search.setMaximumHeight(80)
+        self._search.setPlaceholderText("Enter node name or pattern (e.g., 'N.*' for regex)")
+        layout.addWidget(self._search)
+
+        # Options
+        from PySide6.QtWidgets import QCheckBox
+        self._regex_cb = QCheckBox("Use regex matching")
+        layout.addWidget(self._regex_cb)
+
+        # Results list
+        layout.addWidget(QLabel("Matching nodes:"))
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem
+        self._results = QListWidget()
+        self._results.itemDoubleClicked.connect(self._on_item_double_click)
+        layout.addWidget(self._results)
+
+        # Search button
+        search_btn = QPushButton("Search")
+        search_btn.clicked.connect(self._search_nodes)
+        layout.addWidget(search_btn)
+
+        # Buttons
+        from PySide6.QtWidgets import QDialogButtonBox
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        # Initial search
+        self._search_nodes()
+
+    def _search_nodes(self) -> None:
+        import re
+        pattern = self._search.toPlainText().strip()
+        use_regex = self._regex_cb.isChecked()
+        
+        self._results.clear()
+        matches = []
+        
+        for name in self.graph.nodes.keys():
+            if use_regex:
+                try:
+                    if re.search(pattern, name, re.IGNORECASE):
+                        matches.append(name)
+                except re.error:
+                    pass
+            else:
+                if pattern.lower() in name.lower():
+                    matches.append(name)
+        
+        for name in sorted(matches):
+            self._results.addItem(name)
+
+    def _on_item_double_click(self, item) -> None:
+        self._result = {'node': item.text()}
+        self.accept()
+
+    def get_result(self) -> dict | None:
+        if self._result is None and self._results.currentItem():
+            self._result = {'node': self._results.currentItem().text()}
+        return self._result
+
+
+class FindPathDialog(QDialog):
+    """Dialog for finding shortest path between two nodes."""
+
+    def __init__(self, parent, nodes: list[str]) -> None:
+        super().__init__(parent)
+        self._result = None
+        self._build_ui(nodes)
+
+    def _build_ui(self, nodes: list[str]) -> None:
+        self.setWindowTitle("Find Path")
+        self.setMinimumWidth(350)
+        layout = QVBoxLayout(self)
+
+        # Source node
+        from PySide6.QtWidgets import QComboBox
+        layout.addWidget(QLabel("Source node:"))
+        self._source = QComboBox()
+        self._source.addItems(sorted(nodes))
+        self._source.setEditable(True)
+        layout.addWidget(self._source)
+
+        # Target node
+        layout.addWidget(QLabel("Target node:"))
+        self._target = QComboBox()
+        self._target.addItems(sorted(nodes))
+        self._target.setEditable(True)
+        layout.addWidget(self._target)
+
+        # Info label
+        info = QLabel("Finds shortest path (Dijkstra for weighted graphs)")
+        info.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(info)
+
+        # Buttons
+        from PySide6.QtWidgets import QDialogButtonBox
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def get_result(self) -> dict | None:
+        return {
+            'source': self._source.currentText().strip(),
+            'target': self._target.currentText().strip()
+        }

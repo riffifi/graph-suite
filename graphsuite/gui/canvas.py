@@ -31,6 +31,7 @@ class GraphCanvas(QWidget):
 
     mode_changed = Signal(CanvasMode)
     selection_changed = Signal()  # emitted when selected node/edge changes
+    highlight_changed = Signal(object, object)  # emitted with (highlighted_nodes, highlighted_edges)
 
     def __init__(self, graph: Graph, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -39,9 +40,9 @@ class GraphCanvas(QWidget):
 
         # interaction state
         self._selected_nodes: set[str] = set()
-        self._selected_edges: set[tuple[str, str]] = set()
+        self._selected_edges: set[str] = set()  # Set of edge_ids (not just src,tgt tuples)
         self._hovered_node: str | None = None
-        self._hovered_edge: tuple[str, str] | None = None
+        self._hovered_edge: str | None = None  # edge_id
         self._dragging_node: str | None = None
         self._drag_start: QPointF | None = None
 
@@ -63,7 +64,7 @@ class GraphCanvas(QWidget):
 
         # algorithm highlight
         self._highlighted_nodes: set[str] = set()
-        self._highlighted_edges: set[tuple[str, str]] = set()
+        self._highlighted_edges: set[str] = set()  # Set of edge_ids
         self._hide_non_highlighted: bool = False  # "Show Only Path" mode
 
         # settings
@@ -96,26 +97,55 @@ class GraphCanvas(QWidget):
         self.update()
 
     def set_highlight(self, nodes: set[str],
-                      edges: set[tuple[str, str]]) -> None:
-        """Set highlight and show full graph with highlighted elements."""
+                      edges: set[tuple[str, str]] | set[str]) -> None:
+        """Set highlight and show full graph with highlighted elements.
+
+        Args:
+            nodes: Set of node names to highlight
+            edges: Either set of (src, tgt) tuples OR set of edge_ids
+        """
         self._highlighted_nodes = nodes
-        self._highlighted_edges = edges
+        # Convert (src, tgt) tuples to edge_ids if needed
+        if edges and isinstance(list(edges)[0], tuple):
+            # Convert tuples to edge_ids
+            self._highlighted_edges = set()
+            for src, tgt in edges:
+                for edge in self.graph.get_edges_between(src, tgt):
+                    self._highlighted_edges.add(edge.edge_id)
+        else:
+            self._highlighted_edges = set(edges) if edges else set()
         self._hide_non_highlighted = False  # Show full graph
         self.update()
+        self.highlight_changed.emit(self._highlighted_nodes, self._highlighted_edges)
 
     def clear_highlight(self) -> None:
         self._highlighted_nodes.clear()
         self._highlighted_edges.clear()
         self._hide_non_highlighted = False
         self.update()
+        self.highlight_changed.emit(self._highlighted_nodes, self._highlighted_edges)
 
     def set_highlight_only(self, nodes: set[str],
-                           edges: set[tuple[str, str]]) -> None:
-        """Set highlight and hide non-highlighted elements."""
+                           edges: set[tuple[str, str]] | set[str]) -> None:
+        """Set highlight and hide non-highlighted elements.
+
+        Args:
+            nodes: Set of node names to highlight
+            edges: Either set of (src, tgt) tuples OR set of edge_ids
+        """
         self._highlighted_nodes = nodes
-        self._highlighted_edges = edges
+        # Convert (src, tgt) tuples to edge_ids if needed
+        if edges and isinstance(list(edges)[0], tuple):
+            # Convert tuples to edge_ids
+            self._highlighted_edges = set()
+            for src, tgt in edges:
+                for edge in self.graph.get_edges_between(src, tgt):
+                    self._highlighted_edges.add(edge.edge_id)
+        else:
+            self._highlighted_edges = set(edges) if edges else set()
         self._hide_non_highlighted = True
         self.update()
+        self.highlight_changed.emit(self._highlighted_nodes, self._highlighted_edges)
 
     def clear_highlight_only(self) -> None:
         """Clear highlight and show all elements."""
@@ -123,6 +153,7 @@ class GraphCanvas(QWidget):
         self._highlighted_edges.clear()
         self._hide_non_highlighted = False
         self.update()
+        self.highlight_changed.emit(self._highlighted_nodes, self._highlighted_edges)
 
     def fit_view(self) -> None:
         """Adjust zoom/pan so all nodes are visible."""
@@ -146,6 +177,14 @@ class GraphCanvas(QWidget):
         )
         self.update()
 
+    def center_on(self, x: float, y: float) -> None:
+        """Center the view on a specific point."""
+        self._pan = QPointF(
+            self.width() / 2 - x * self._zoom,
+            self.height() / 2 - y * self._zoom,
+        )
+        self.update()
+
     # -- coordinate transforms ---------------------------------------------
 
     def _to_scene(self, widget_pos: QPointF) -> QPointF:
@@ -160,6 +199,22 @@ class GraphCanvas(QWidget):
             scene_pos.y() * self._zoom + self._pan.y(),
         )
 
+    def _get_visible_scene_rect(self) -> QRectF:
+        """Get the visible area in scene coordinates (with margin)."""
+        margin = 50 / self._zoom  # Extra margin for smooth scrolling
+        top_left = self._to_scene(QPointF(-margin, -margin))
+        bottom_right = self._to_scene(
+            QPointF(self.width() + margin, self.height() + margin)
+        )
+        return QRectF(top_left, bottom_right)
+
+    def _is_node_visible(self, node: Node, visible_rect: QRectF) -> bool:
+        """Check if node is within visible area."""
+        r = node.radius
+        return visible_rect.intersects(
+            QRectF(node.x - r, node.y - r, 2 * r, 2 * r)
+        )
+
     # -- graph events ------------------------------------------------------
 
     def _on_graph_event(self, event: GraphEvent, data: dict) -> None:
@@ -169,7 +224,16 @@ class GraphCanvas(QWidget):
 
     def paintEvent(self, event) -> None:  # noqa: N802
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # For dense graphs (>1000 nodes), disable anti-aliasing for performance
+        is_dense = len(self.graph.nodes) > 1000
+        if not is_dense:
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Count curved edges for fast render mode
+        curved_edge_count = sum(1 for e in self.graph.edges if e.curvature != 0.0)
+        # Fast render for many curved edges (>8) or dense graphs
+        fast_render = curved_edge_count > 8 or is_dense
 
         # background
         p.fillRect(self.rect(), QColor(Colors.CANVAS_BG))
@@ -179,9 +243,12 @@ class GraphCanvas(QWidget):
         p.translate(self._pan)
         p.scale(self._zoom, self._zoom)
 
+        # Calculate visible area in scene coordinates
+        visible_rect = self._get_visible_scene_rect()
+
         # draw edges first
         for edge in self.graph.edges:
-            self._draw_edge(p, edge)
+            self._draw_edge(p, edge, fast_render=fast_render)
 
         # draw curve handles for hovered edges (Ctrl mode)
         self._draw_curve_handles(p)
@@ -195,9 +262,15 @@ class GraphCanvas(QWidget):
                 p.drawLine(QPointF(src_node.x, src_node.y),
                            QPointF(end.x(), end.y()))
 
-        # draw nodes
+        # Draw nodes - cull those outside visible area
+        # For dense graphs (>500 nodes), skip labels to improve performance
+        show_labels = len(self.graph.nodes) <= 500
+        
         for node in self.graph.nodes.values():
-            self._draw_node(p, node)
+            # Culling: skip nodes outside visible area (with margin)
+            if not self._is_node_visible(node, visible_rect):
+                continue
+            self._draw_node(p, node, draw_label=show_labels, fast_render=fast_render)
 
         p.restore()
 
@@ -229,7 +302,7 @@ class GraphCanvas(QWidget):
         for y in range(oy, self.height(), step):
             p.drawLine(0, y, self.width(), y)
 
-    def _draw_node(self, p: QPainter, node: Node) -> None:
+    def _draw_node(self, p: QPainter, node: Node, draw_label: bool = True, fast_render: bool = False) -> None:
         r = node.radius
         is_selected = node.name in self._selected_nodes
         is_highlighted = node.name in self._highlighted_nodes
@@ -239,15 +312,16 @@ class GraphCanvas(QWidget):
         if self._hide_non_highlighted and not is_highlighted and not is_selected:
             return  # Skip drawing this node
 
-        # outer glow for selection / highlight
-        if is_selected:
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QBrush(QColor(Colors.NODE_SELECTED + "44")))
-            p.drawEllipse(QPointF(node.x, node.y), r + 8, r + 8)
-        elif is_highlighted:
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QBrush(QColor(Colors.ALGO_HIGHLIGHT + "44")))
-            p.drawEllipse(QPointF(node.x, node.y), r + 8, r + 8)
+        # outer glow for selection / highlight (skip in fast render)
+        if not fast_render:
+            if is_selected:
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QBrush(QColor(Colors.NODE_SELECTED + "44")))
+                p.drawEllipse(QPointF(node.x, node.y), r + 8, r + 8)
+            elif is_highlighted:
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QBrush(QColor(Colors.ALGO_HIGHLIGHT + "44")))
+                p.drawEllipse(QPointF(node.x, node.y), r + 8, r + 8)
 
         # fill
         fill_color = (Colors.NODE_SELECTED if is_selected
@@ -261,16 +335,39 @@ class GraphCanvas(QWidget):
                         else Colors.ALGO_HIGHLIGHT if is_highlighted
                         else Colors.TEXT_BRIGHT if is_hovered
                         else "#00000044")
-        p.setPen(QPen(QColor(border_color), 2))
+        
+        if fast_render:
+            # Fast render: simpler border, no anti-aliasing needed
+            p.setPen(QPen(QColor(border_color), 1))
+        else:
+            p.setPen(QPen(QColor(border_color), 2))
+        
         p.drawEllipse(QPointF(node.x, node.y), r, r)
 
-        # label
-        font = QFont("sans-serif", max(9, int(12 * min(self._zoom, 1.5) / self._zoom)))
-        font.setBold(True)
-        p.setFont(font)
-        p.setPen(QPen(QColor(Colors.NODE_LABEL)))
-        text_rect = QRectF(node.x - r, node.y - r, 2 * r, 2 * r)
-        p.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, node.name)
+        # label (skip for dense graphs to improve performance)
+        if draw_label and not fast_render:
+            font = QFont("sans-serif", max(9, int(12 * min(self._zoom, 1.5) / self._zoom)))
+            font.setBold(True)
+            p.setFont(font)
+            p.setPen(QPen(QColor(Colors.NODE_LABEL)))
+            text_rect = QRectF(node.x - r, node.y - r, 2 * r, 2 * r)
+            p.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, node.name)
+
+    def _draw_fast_curve(self, p: QPainter, sx: float, sy: float, 
+                         tx: float, ty: float, cx: float, cy: float) -> None:
+        """Draw approximate curve using 4 line segments (faster than QPainterPath)."""
+        # Quadratic bezier: B(t) = (1-t)²P0 + 2(1-t)tP1 + t²P2
+        # Sample at t = 0, 0.25, 0.5, 0.75, 1.0
+        points = []
+        for t in [0.0, 0.25, 0.5, 0.75, 1.0]:
+            one_minus_t = 1.0 - t
+            x = one_minus_t * one_minus_t * sx + 2 * one_minus_t * t * cx + t * t * tx
+            y = one_minus_t * one_minus_t * sy + 2 * one_minus_t * t * cy + t * t * ty
+            points.append(QPointF(x, y))
+        
+        # Draw line segments
+        for i in range(len(points) - 1):
+            p.drawLine(points[i], points[i + 1])
 
     def _get_parallel_edge_index(self, edge: Edge) -> int:
         """Get the index of this edge among parallel edges between same nodes."""
@@ -282,17 +379,18 @@ class GraphCanvas(QWidget):
                 return i
         return 0
 
-    def _draw_edge(self, p: QPainter, edge: Edge) -> None:
+    def _draw_edge(self, p: QPainter, edge: Edge, fast_render: bool = False) -> None:
         src = self.graph.nodes.get(edge.source)
         tgt = self.graph.nodes.get(edge.target)
         if src is None or tgt is None:
             return
 
-        key = (edge.source, edge.target)
-        is_selected = key in self._selected_edges
-        is_highlighted = (key in self._highlighted_edges or
-                          (edge.target, edge.source) in self._highlighted_edges)
-        is_hovered = (key == self._hovered_edge)
+        # Check selection/highlight/hover by edge_id (supports parallel edges)
+        is_selected = edge.edge_id in self._selected_edges
+        is_highlighted = (edge.edge_id in self._highlighted_edges or
+                          (self.graph.is_edge_bidirectional(edge.target, edge.source, edge.edge_id) and
+                           edge.edge_id in self._highlighted_edges))
+        is_hovered = (edge.edge_id == self._hovered_edge)
 
         # "Show Only Path" mode - hide non-highlighted edges
         if self._hide_non_highlighted and not is_highlighted and not is_selected:
@@ -358,6 +456,7 @@ class GraphCanvas(QWidget):
         p.setPen(QPen(QColor(color), width))
         p.setBrush(Qt.BrushStyle.NoBrush)
 
+        ctrl_point = None
         # Draw curved edge if curvature is non-zero (user-defined or auto for parallel)
         if curvature != 0.0:
             # Quadratic bezier curve with control point at midpoint + curvature
@@ -367,18 +466,21 @@ class GraphCanvas(QWidget):
             ctrl_x = mid_x + nx_ * curvature
             ctrl_y = mid_y + ny_ * curvature
 
-            path = QPainterPath(QPointF(sx2, sy2))
-            path.quadTo(QPointF(ctrl_x, ctrl_y), QPointF(tx2, ty2))
-            p.drawPath(path)
+            if fast_render:
+                # Fast render: approximate curve with line segments (faster than bezier)
+                self._draw_fast_curve(p, sx2, sy2, tx2, ty2, ctrl_x, ctrl_y)
+            else:
+                path = QPainterPath(QPointF(sx2, sy2))
+                path.quadTo(QPointF(ctrl_x, ctrl_y), QPointF(tx2, ty2))
+                p.drawPath(path)
 
             # Store control point for arrowhead calculation
             ctrl_point = QPointF(ctrl_x, ctrl_y)
         else:
             p.drawLine(QPointF(sx2, sy2), QPointF(tx2, ty2))
-            ctrl_point = None
 
         # arrowhead(s) for directed
-        if self.graph.directed:
+        if self.graph.directed and not fast_render:
             if ctrl_point is not None:
                 # For curved edges, calculate tangent at end point using bezier derivative
                 self._draw_curved_arrowhead(p, sx2, sy2, tx2, ty2,
@@ -398,23 +500,23 @@ class GraphCanvas(QWidget):
                 else:
                     self._draw_arrowhead(p, tx2, ty2, sx2, sy2, color, width)
 
-        # weight label
-        if self.graph.weighted:
+        # weight label (skip in fast render mode)
+        if self.graph.weighted and not fast_render:
             # Calculate midpoint along curve (or straight line)
             if ctrl_point is not None:
                 # For bezier curve, calculate exact midpoint and tangent
                 t = 0.5
                 one_minus_t = 1 - t
-                
+
                 # Point on curve at t=0.5
                 mt_x = (one_minus_t ** 2) * sx2 + 2 * one_minus_t * t * ctrl_point.x() + (t ** 2) * tx2
                 mt_y = (one_minus_t ** 2) * sy2 + 2 * one_minus_t * t * ctrl_point.y() + (t ** 2) * ty2
-                
+
                 # Tangent at midpoint (derivative of bezier)
                 tan_x = 2 * one_minus_t * (ctrl_point.x() - sx2) + 2 * t * (tx2 - ctrl_point.x())
                 tan_y = 2 * one_minus_t * (ctrl_point.y() - sy2) + 2 * t * (ty2 - ctrl_point.y())
                 tan_len = math.hypot(tan_x, tan_y)
-                
+
                 # Normal (perpendicular to tangent)
                 if tan_len > 0:
                     nmx, nmy = -tan_y / tan_len, tan_x / tan_len
@@ -426,24 +528,44 @@ class GraphCanvas(QWidget):
                 mt_y = (sy2 + ty2) / 2
                 nmx, nmy = nx_, ny_
 
-            # Keep label close to edge - fixed small offset
-            label_offset = 6
+            # Ensure label is always ABOVE the edge (toward viewer)
+            # Flip normal if it points downward (screen Y increases downward)
+            if nmy > 0:
+                nmx, nmy = -nmx, -nmy
+
+            # Clamp label offset to keep it close to edge even with extreme curvature
+            # Calculate distance from curve midpoint to line midpoint
+            line_mid_x = (sx2 + tx2) / 2
+            line_mid_y = (sy2 + ty2) / 2
+            curve_deviation = math.hypot(mt_x - line_mid_x, mt_y - line_mid_y)
+            
+            # Use smaller offset for highly curved edges to keep label readable
+            if ctrl_point is not None and curve_deviation > 50:
+                label_offset = 8  # Slightly larger for curved edges
+            else:
+                label_offset = 6  # Standard offset
+
             mx = mt_x + nmx * label_offset
             my = mt_y + nmy * label_offset
 
-            # Draw weight text with clean outline for visibility
-            font = QFont("Consolas", 9)
+            # Draw weight text - simplified for fast render
+            font = QFont("Consolas", 10)
             font.setBold(True)
             p.setFont(font)
-            
+
             w_text = (f"{edge.weight:g}" if edge.weight == int(edge.weight)
                       else f"{edge.weight:.2f}")
-            
-            # Draw text with outline: white stroke then colored text
-            p.setPen(QPen(QColor("#ffffff"), 3))
-            p.drawText(QPointF(mx, my), w_text)
-            p.setPen(QPen(QColor("#ff6b6b"), 1))  # Reddish color for visibility
-            p.drawText(QPointF(mx, my), w_text)
+
+            if fast_render:
+                # Fast render: single color text, no outline
+                p.setPen(QPen(QColor("#ffffff"), 1))
+                p.drawText(QPointF(mx, my), w_text)
+            else:
+                # High quality: white fill with dark outline for readability
+                p.setPen(QPen(QColor("#000000"), 4))  # Thick dark outline
+                p.drawText(QPointF(mx, my), w_text)
+                p.setPen(QPen(QColor("#ffffff"), 1))  # White fill
+                p.drawText(QPointF(mx, my), w_text)
 
     def _draw_curve_handles(self, p: QPainter) -> None:
         """Draw draggable curve handles for edges when Ctrl is held."""
@@ -720,7 +842,7 @@ class GraphCanvas(QWidget):
                 if handle:
                     self._dragging_edge_curvature = handle
                     return  # Start dragging curve handle
-            
+
             if node:
                 if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
                     # toggle selection
@@ -738,13 +860,24 @@ class GraphCanvas(QWidget):
             else:
                 edge = self.graph.edge_at(scene.x(), scene.y())
                 if edge:
-                    self._selected_edges = {edge.key}
-                    self._selected_nodes.clear()
+                    # Select by edge_id (supports parallel edges)
+                    if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                        # Toggle edge selection with Ctrl
+                        if edge.edge_id in self._selected_edges:
+                            self._selected_edges.discard(edge.edge_id)
+                        else:
+                            self._selected_edges.add(edge.edge_id)
+                        self._selected_nodes.clear()
+                    else:
+                        self._selected_edges = {edge.edge_id}
+                        self._selected_nodes.clear()
                     self.selection_changed.emit()
                 else:
-                    # Click on empty space in SELECT mode → start pan
+                    # Click on empty space in SELECT mode → deselect all and start pan
+                    self._selected_nodes.clear()
+                    self._selected_edges.clear()
+                    self.selection_changed.emit()
                     self._start_pan(pos)
-                    return
 
         elif self._mode == CanvasMode.ADD_NODE:
             self.graph.add_node(x=scene.x(), y=scene.y())
@@ -833,23 +966,33 @@ class GraphCanvas(QWidget):
                 if src and tgt:
                     sx, sy = src.x, src.y
                     tx, ty = tgt.x, tgt.y
-                    
+
                     dx, dy = tx - sx, ty - sy
                     length = math.hypot(dx, dy)
                     if length > 0:
-                        ux, uy = dx / length, dy / length
                         nx_, ny_ = -dy / length, dx / length  # perpendicular
-                        
+
                         # Vector from edge midpoint to mouse
                         mid_x = (sx + tx) / 2
                         mid_y = (sy + ty) / 2
                         to_mouse_x = scene.x() - mid_x
                         to_mouse_y = scene.y() - mid_y
-                        
+
                         # Project onto perpendicular direction
-                        curvature_amount = to_mouse_x * nx_ + to_mouse_y * ny_
-                        edge.curvature = curvature_amount
-                        self.graph._notify(GraphEvent.EDGE_WEIGHT_CHANGED, edge=edge)
+                        new_curvature = to_mouse_x * nx_ + to_mouse_y * ny_
+                        
+                        # Calculate curvature delta for the dragged edge
+                        curvature_delta = new_curvature - edge.curvature
+                        
+                        # Apply same delta to all selected edges
+                        edges_to_curve = self._selected_edges.copy() if self._selected_edges else {edge.edge_id}
+                        
+                        for edge_id in edges_to_curve:
+                            e = self.graph.get_edge_by_id(edge_id)
+                            if e:
+                                e.curvature += curvature_delta
+                                self.graph._notify(GraphEvent.EDGE_WEIGHT_CHANGED, edge=e)
+                        
                         self.update()
                     return
 
@@ -875,7 +1018,9 @@ class GraphCanvas(QWidget):
         old_hover = self._hovered_node
         self._hovered_node = node.name if node else None
 
-        edge = self.graph.edge_at(scene.x(), scene.y()) if not node else None
+        # Use larger tolerance for edge detection in "Show Only Path" mode
+        edge_tolerance = 20.0 if self._hide_non_highlighted else 10.0
+        edge = self.graph.edge_at(scene.x(), scene.y(), edge_tolerance) if not node else None
         old_edge_hover = self._hovered_edge
         self._hovered_edge = edge.key if edge else None
 
@@ -895,7 +1040,15 @@ class GraphCanvas(QWidget):
                 self._pan_start_offset = None
                 self._update_cursor()
             if self._dragging_edge_curvature:
-                # Finish curve handle drag - save undo state
+                # Finish curve handle drag - save undo state for all curved edges
+                edges_to_record = self._selected_edges.copy() if self._selected_edges else {self._dragging_edge_curvature[2]}
+                for edge_id in edges_to_record:
+                    e = self.graph.get_edge_by_id(edge_id)
+                    if e:
+                        self.graph.move_node(e.source,
+                                             self.graph.nodes[e.source].x,
+                                             self.graph.nodes[e.source].y,
+                                             record_undo=True)
                 self._dragging_edge_curvature = None
                 self.update()
                 return
@@ -947,8 +1100,9 @@ class GraphCanvas(QWidget):
         if event.key() == Qt.Key.Key_Delete or event.key() == Qt.Key.Key_Backspace:
             for name in list(self._selected_nodes):
                 self.graph.remove_node(name)
-            for src, tgt in list(self._selected_edges):
-                self.graph.remove_edge(src, tgt)
+            # Delete edges by edge_id (supports parallel edges)
+            for edge_id in list(self._selected_edges):
+                self.graph.remove_edge_by_id(edge_id)
             self._selected_nodes.clear()
             self._selected_edges.clear()
             self.selection_changed.emit()

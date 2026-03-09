@@ -6,22 +6,26 @@ Syntax
 set directed true|false
 set weighted true|false
 cmdoutput true|false               # enable/disable command output
+cache true|false                   # enable/disable LRU cache for computations
 
 # Variables and Expressions
 let <name> = <expr>                # variable assignment
 let <name> = <expr> op <expr>      # math: +, -, *, /, %, ^
-print <expr>                       # print value or message
+compute <name> = <expr>            # math expression with functions: sqrt, sin, cos, etc.
 
 # Nodes
-node <name> [at <x> <y>]
+node <name> [at <x> <y>] [spacing <s>]
 nodes <name1> <name2> ... <nameN> [at <x> <y>]
 grid <rows> <cols> [spacing <s>] [start <name>]
-circle <n> [radius <r>] [start <name>]
+circle <n> [radius <r>] [gap <g>] [center <x> <y>] [start <name>]
 
 # Iterators and Loops
 iter <var> in <start>..<end> [by <step>]: <command>
 iter <var> in [list]: <command>
 for <var> in <start>..<end>: ...
+while <var> <op> <value> do        # while loop: <, >, <=, >=, ==, !=
+    <commands>
+end
 
 # Edges
 edge <src> -> <tgt> [weight <w>]     # directed edge
@@ -51,6 +55,11 @@ delete edge <src> <tgt>
 rename <old> <new>
 color <node> <#hex>
 
+# Fractals and Complex Patterns
+mandelbrot prefix=<p> width=<w> height=<h>   # generate Mandelbrot set
+           xmin=<x> xmax=<x> ymin=<y> ymax=<y>
+           max_iter=<n> spacing=<s>
+
 # Algorithms
 run bfs|dfs from <src>
 run dijkstra from <src> to <tgt>
@@ -60,7 +69,7 @@ run topo
 run info
 
 # Layout
-layout circle|spring
+layout circle|spring|hierarchical|grid|spectral
 
 # Utility
 clear
@@ -71,6 +80,7 @@ from __future__ import annotations
 
 import re
 import shlex
+from functools import lru_cache
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any
@@ -109,6 +119,14 @@ class TT(Enum):
     SLASH = auto()       # /
     PERCENT = auto()     # %
     CARET = auto()       # ^
+    LT = auto()          # <
+    GT = auto()          # >
+    LE = auto()          # <=
+    GE = auto()          # >=
+    EQ = auto()          # ==
+    NE = auto()          # !=
+    LBRACE = auto()      # {
+    RBRACE = auto()      # }
     HASH_COLOR = auto()  # #rrggbb
     NEWLINE = auto()
     EOF = auto()
@@ -133,22 +151,35 @@ KEYWORDS = {
     "bfs", "dfs", "dijkstra", "bellman", "mst", "components",
     "scc", "topo", "cycle", "centrality", "info", "connect", "path",
     "circle", "spring", "grid", "star", "wheel", "ladder",
+    "hierarchical", "spectral",
     "toggle", "separate", "curve",
     "bidirectional", "unidirectional",
     "iter", "for", "in", "by",
+    "while", "do", "end", "compute", "mandelbrot",
+    "cache",
+    # Import/export (for documentation)
+    "import", "export", "graphml", "dot", "csv",
 }
 
 _TOKEN_RE = re.compile(r"""
+    (?P<hexcolor>\#[0-9a-fA-F]{6})\b |
     (?P<comment>\#[^\n]*)        |
     (?P<dualarrow><=>)           |
     (?P<bidiarrow><->)           |
     (?P<arrow>->)                |
     (?P<dash>--)                 |
     (?P<range>\.\.)              |
+    (?P<le><=)                   |
+    (?P<ge>>=)                   |
+    (?P<eq>==)                   |
+    (?P<ne>!=)                   |
+    (?P<lt><)                    |
+    (?P<gt>>)                    |
+    (?P<lbrace>\{)               |
+    (?P<rbrace>\})               |
     (?P<operator>[+\-*/%^])      |
     (?P<equals>=)                |
     (?P<colon>:)                 |
-    (?P<hexcolor>\#[0-9a-fA-F]{6})\b |
     (?P<number>-?\d+(?:\.\d+)?)  |
     (?P<word>[A-Za-z_]\w*)       |
     (?P<nl>\n)                   |
@@ -180,6 +211,22 @@ def tokenize(source: str) -> list[Token]:
             tokens.append(Token(TT.DASH, "--", lineno))
         elif kind == "range":
             tokens.append(Token(TT.RANGE, "..", lineno))
+        elif kind == "le":
+            tokens.append(Token(TT.LE, "<=", lineno))
+        elif kind == "ge":
+            tokens.append(Token(TT.GE, ">=", lineno))
+        elif kind == "eq":
+            tokens.append(Token(TT.EQ, "==", lineno))
+        elif kind == "ne":
+            tokens.append(Token(TT.NE, "!=", lineno))
+        elif kind == "lt":
+            tokens.append(Token(TT.LT, "<", lineno))
+        elif kind == "gt":
+            tokens.append(Token(TT.GT, ">", lineno))
+        elif kind == "lbrace":
+            tokens.append(Token(TT.LBRACE, "{", lineno))
+        elif kind == "rbrace":
+            tokens.append(Token(TT.RBRACE, "}", lineno))
         elif kind == "operator":
             op_map = {"+": TT.PLUS, "-": TT.MINUS, "*": TT.STAR, "/": TT.SLASH, "%": TT.PERCENT, "^": TT.CARET}
             tokens.append(Token(op_map[val], val, lineno))
@@ -246,6 +293,47 @@ class Parser:
         if t.type in (TT.IDENT, TT.KEYWORD, TT.NUMBER):
             return t.value
         raise ParseError(f"Line {t.line}: expected name, got '{t.value}'")
+
+    def _read_name_pattern(self) -> str:
+        """Read a name pattern that may include {var} substitution syntax.
+
+        Handles patterns like:
+        - Simple: N, v1, node_A
+        - With substitution: N{i}, v{i}, node_{i}
+        - Complex: prefix_{var}_suffix
+
+        Stops at keywords like 'at', 'weight', etc.
+        """
+        parts = []
+        # Keywords that should stop pattern reading
+        stop_keywords = {'at', 'weight', 'radius', 'start', 'spacing', 'true', 'false'}
+
+        while True:
+            t = self._peek()
+            # Stop at keywords or special tokens
+            if t.value.lower() in stop_keywords:
+                break
+            if t.type in (TT.IDENT, TT.KEYWORD, TT.NUMBER):
+                self._advance()
+                parts.append(t.value)
+            elif t.type == TT.LBRACE:
+                # Start of variable substitution: {var}
+                self._advance()  # consume '{'
+                var_token = self._advance()  # read variable name
+                parts.append("{" + var_token.value + "}")
+                # Consume closing brace if present
+                if self._peek().type == TT.RBRACE:
+                    self._advance()
+                # Continue reading - there may be more after the }
+                continue
+            elif t.type in (TT.PLUS, TT.MINUS):
+                # Allow + and - as part of pattern (for expressions)
+                self._advance()
+                parts.append(t.value)
+            else:
+                break
+
+        return "".join(parts)
 
     def parse(self) -> list[Command]:
         commands: list[Command] = []
@@ -330,6 +418,14 @@ class Parser:
             return self._parse_print()
         elif kw == "cmdoutput":
             return self._parse_cmdoutput()
+        elif kw == "cache":
+            return self._parse_cache()
+        elif kw == "while":
+            return self._parse_while()
+        elif kw == "compute":
+            return self._parse_compute()
+        elif kw == "mandelbrot":
+            return self._parse_mandelbrot()
         else:
             self._advance()  # skip unknown
             return None
@@ -341,14 +437,18 @@ class Parser:
         return Command("set", {"prop": prop, "value": val}, t.line)
 
     def _parse_node(self) -> Command:
+        """Parse 'node <name> [at <x> <y>] [spacing <s>]' command."""
         t = self._advance()  # node
-        name = self._read_name()
-        x, y = None, None
+        name = self._read_name_pattern()
+        x, y, spacing = None, None, None
         if self._peek().value.lower() == "at":
             self._advance()  # at
             x = float(self._advance().value)
             y = float(self._advance().value)
-        return Command("node", {"name": name, "x": x, "y": y}, t.line)
+        if self._peek().value.lower() == "spacing":
+            self._advance()  # spacing
+            spacing = float(self._advance().value)
+        return Command("node", {"name": name, "x": x, "y": y, "spacing": spacing}, t.line)
 
     def _parse_nodes(self) -> Command:
         """Parse 'nodes <n1> <n2> ... <nN> [at <x> <y>]' command."""
@@ -448,22 +548,31 @@ class Parser:
         return Command("grid", {"rows": rows, "cols": cols, "spacing": spacing, "start": start_name}, t.line)
 
     def _parse_circle_nodes(self) -> Command:
-        """Parse 'circle <n> [radius <r>] [start <name>]' command."""
+        """Parse 'circle <n> [radius <r>] [gap <g>] [center <x> <y>] [start <name>]' command."""
         t = self._advance()  # circle
         n = int(self._advance().value)
         radius = 150  # default
+        gap = None  # alternative to radius
+        cx, cy = 400, 300  # default center
         start_name = "v1"  # default
         while self._peek().type not in (TT.NEWLINE, TT.EOF):
             kw = self._peek().value.lower()
             if kw == "radius":
                 self._advance()
                 radius = float(self._advance().value)
+            elif kw == "gap":
+                self._advance()
+                gap = float(self._advance().value)
+            elif kw == "center":
+                self._advance()
+                cx = float(self._advance().value)
+                cy = float(self._advance().value)
             elif kw == "start":
                 self._advance()
                 start_name = self._read_name()
             else:
                 self._advance()
-        return Command("circle_nodes", {"n": n, "radius": radius, "start": start_name}, t.line)
+        return Command("circle_nodes", {"n": n, "radius": radius, "gap": gap, "start": start_name, "cx": cx, "cy": cy}, t.line)
 
     def _parse_let(self) -> Command:
         """Parse 'let <name> = <value>' command."""
@@ -489,6 +598,137 @@ class Parser:
         t = self._advance()  # cmdoutput
         val = self._read_name().lower()
         return Command("cmdoutput", {"value": val in ("true", "1", "yes")}, t.line)
+
+    def _parse_cache(self) -> Command:
+        """Parse 'cache true|false' command."""
+        t = self._advance()  # cache
+        val = self._read_name().lower()
+        return Command("cache", {"value": val in ("true", "1", "yes")}, t.line)
+
+    def _parse_while(self) -> Command:
+        """Parse 'while <condition> do ... end' loop.
+
+        Syntax:
+            while <var> <op> <value> do
+                <commands>
+            end
+        """
+        t = self._advance()  # while
+
+        # Read condition: var op value
+        var_name = self._read_name()
+        
+        # Read operator token
+        op_token = self._advance()
+        op_map = {
+            TT.LT: "<", TT.GT: ">", TT.LE: "<=", TT.GE: ">=",
+            TT.EQ: "==", TT.NE: "!="
+        }
+        if op_token.type not in op_map:
+            raise ParseError(f"Line {t.line}: expected comparison operator (<, >, <=, >=, ==, !=), got '{op_token.value}'")
+        op = op_map[op_token.type]
+        
+        # Read threshold value
+        threshold_token = self._advance()
+        try:
+            threshold = float(threshold_token.value)
+        except ValueError:
+            raise ParseError(f"Line {t.line}: expected numeric threshold, got '{threshold_token.value}'")
+
+        # Expect 'do'
+        if self._peek().value.lower() != "do":
+            raise ParseError(f"Line {t.line}: expected 'do' after condition")
+        self._advance()  # consume 'do'
+
+        # Read commands until 'end'
+        commands = []
+        while self._peek().type != TT.EOF:
+            if self._peek().value.lower() == "end":
+                self._advance()  # consume 'end'
+                break
+
+            # Parse the command on this line
+            cmd = self._parse_command()
+            if cmd:
+                commands.append(cmd)
+
+        return Command("while", {
+            "var": var_name,
+            "op": op,
+            "threshold": threshold,
+            "commands": commands
+        }, t.line)
+
+    def _parse_compute(self) -> Command:
+        """Parse 'compute <var> = <expr>' command for math expressions.
+        
+        Syntax:
+            compute <var> = <expr>
+            compute <var> = <expr> ^ 2
+            compute <var> = sqrt(<var>)
+        """
+        t = self._advance()  # compute
+        
+        var_name = self._read_name()
+        
+        # Expect '='
+        if self._peek().value != "=":
+            raise ParseError(f"Line {t.line}: expected '=' after variable")
+        self._advance()  # consume '='
+        
+        # Read expression (rest of line until newline)
+        expr_parts = []
+        while self._peek().type not in (TT.NEWLINE, TT.EOF):
+            expr_parts.append(self._advance().value)
+        
+        expr = " ".join(expr_parts)
+        return Command("compute", {"name": var_name, "expr": expr}, t.line)
+
+    def _parse_mandelbrot(self) -> Command:
+        """Parse 'mandelbrot prefix=<p> width=<w> height=<h> ...' command.
+        
+        Syntax:
+            mandelbrot prefix=<p> width=<w> height=<h>
+                       xmin=<x> xmax=<x> ymin=<y> ymax=<y>
+                       max_iter=<n> spacing=<s>
+        """
+        t = self._advance()  # mandelbrot
+
+        args = {}
+
+        # Read all key=value pairs (skip newlines)
+        while self._peek().type not in (TT.EOF,):
+            # Skip newlines
+            if self._peek().type == TT.NEWLINE:
+                self._advance()
+                continue
+            
+            # Check if we've hit another command
+            if self._peek().type == TT.KEYWORD:
+                break
+                
+            key = self._read_name()
+            if self._peek().value == "=":
+                self._advance()  # consume '='
+                
+                # Handle negative numbers: - followed by number
+                if self._peek().type == TT.MINUS:
+                    self._advance()  # consume '-'
+                    if self._peek().type == TT.NUMBER:
+                        value = "-" + self._advance().value
+                    else:
+                        value = "-"
+                else:
+                    value = self._advance().value
+                    
+                try:
+                    args[key] = float(value)
+                except ValueError:
+                    args[key] = value
+            else:
+                args[key] = True
+
+        return Command("mandelbrot", args, t.line)
 
     def _parse_edge(self) -> Command:
         t = self._advance()  # edge
@@ -586,7 +826,7 @@ class Parser:
 
     def _parse_color(self) -> Command:
         t = self._advance()
-        name = self._read_name()
+        name = self._read_name_pattern()
         ct = self._advance()
         if ct.type != TT.HASH_COLOR:
             raise ParseError(f"Line {t.line}: expected #rrggbb color")
@@ -645,25 +885,28 @@ class Parser:
         if self._peek().type != TT.COLON:
             raise ParseError(f"Line {t.line}: expected ':' after range")
         self._advance()  # consume ':'
-        
+
         # Read command after colon (just the keyword and args)
         cmd_kw = self._peek().value.lower()
         if cmd_kw == "node":
             self._advance()
-            name_pattern = self._read_name()
-            x, y = 200.0, 200.0
+            name_pattern = self._read_name_pattern()  # Use pattern-aware reader
+            x, y, spacing = 200.0, 200.0, None
             if self._peek().value.lower() == "at":
                 self._advance()
                 x = float(self._advance().value)
                 y = float(self._advance().value)
+            if self._peek().value.lower() == "spacing":
+                self._advance()
+                spacing = float(self._advance().value)
             return Command("iter_node", {"var": var_name, "start": start, "end": end, "step": step,
-                                          "name_pattern": name_pattern, "x": x, "y": y}, t.line)
+                                          "name_pattern": name_pattern, "x": x, "y": y, "spacing": spacing}, t.line)
         elif cmd_kw == "edge":
             self._advance()
             # Read edge pattern with variable substitution
-            src_pattern = self._read_name()
+            src_pattern = self._read_name_pattern()  # Use pattern-aware reader
             arrow = self._advance()
-            tgt_pattern = self._read_name()
+            tgt_pattern = self._read_name_pattern()  # Use pattern-aware reader
             weight = None
             if self._peek().value.lower() == "weight":
                 self._advance()
@@ -779,6 +1022,43 @@ class Interpreter:
         self._highlight_nodes: set[str] = set()
         self._highlight_edges: set[tuple[str, str]] = set()
         self._cmdoutput_enabled: bool = True  # Command output enabled by default
+        self._variables: dict[str, float] = {}  # Variable storage for math expressions
+        self._cache_enabled: bool = False  # LRU cache for computations
+        self._mandelbrot_cache = None  # Will hold the cached function
+
+    def _get_mandelbrot_escape(self, max_iter: int):
+        """Get or create cached Mandelbrot escape function."""
+        if self._cache_enabled and self._mandelbrot_cache is not None:
+            return self._mandelbrot_cache
+        
+        # Create new cached function
+        @lru_cache(maxsize=65536)  # Cache up to 64K points
+        def escape(cr: float, ci: float) -> int:
+            zr, zi = 0.0, 0.0
+            n = 0
+            while n < max_iter and zr * zr + zi * zi <= 4:
+                zr_new = zr * zr - zi * zi + cr
+                zi = 2 * zr * zi + ci
+                zr = zr_new
+                n += 1
+            return n
+        
+        self._mandelbrot_cache = escape
+        return escape
+
+    def _clear_cache(self) -> None:
+        """Clear the LRU cache."""
+        if self._mandelbrot_cache is not None:
+            self._mandelbrot_cache.cache_clear()
+        self._mandelbrot_cache = None
+
+    def _substitute_vars(self, s: str) -> str:
+        """Substitute {var} patterns in a string with variable values."""
+        result = s
+        for var_name, var_val in self._variables.items():
+            # Replace {var} pattern
+            result = result.replace("{" + var_name + "}", str(int(var_val) if var_val == int(var_val) else var_val))
+        return result
 
     def run(self, source: str) -> tuple[str, set[str], set[tuple[str, str]]]:
         """Parse and execute source. Returns (output_text, highlight_nodes, highlight_edges)."""
@@ -806,6 +1086,34 @@ class Interpreter:
         else:
             self._output_lines.append(f"Unknown command: {cmd.kind}")
 
+    def _eval_expr(self, value: str) -> float:
+        """Evaluate a numeric expression, substituting variables."""
+        # Try direct float conversion first
+        try:
+            return float(value)
+        except ValueError:
+            pass
+        
+        # Check if it's a variable
+        if value in self._variables:
+            return self._variables[value]
+        
+        # Try to evaluate as expression with variable substitution
+        expr = value
+        for var_name, var_val in self._variables.items():
+            expr = expr.replace(var_name, str(var_val))
+        
+        # Safe evaluation of simple math expressions
+        try:
+            # Only allow basic math operators
+            if all(c in "0123456789.+-*/^() " for c in expr):
+                expr = expr.replace("^", "**")
+                return float(eval(expr))
+        except Exception:
+            pass
+        
+        return 0.0
+
     def _cmd_set(self, args: dict) -> None:
         prop = args["prop"]
         val = args["value"]
@@ -826,10 +1134,37 @@ class Interpreter:
         # Always confirm cmdoutput changes
         self._output_lines.append(f"command output = {'enabled' if self._cmdoutput_enabled else 'disabled'}")
 
+    def _cmd_cache(self, args: dict) -> None:
+        """Enable/disable LRU cache for computations."""
+        self._cache_enabled = args["value"]
+        if self._cache_enabled:
+            self._clear_cache()  # Clear old cache when enabling
+            self._output_lines.append("cache = enabled (LRU cache active)")
+        else:
+            self._clear_cache()
+            self._output_lines.append("cache = disabled")
+
     def _cmd_node(self, args: dict) -> None:
-        x = args["x"] if args["x"] is not None else 200
-        y = args["y"] if args["y"] is not None else 200
-        node = self.graph.add_node(name=args["name"], x=x, y=y)
+        """Create a single node with optional spacing from last node."""
+        # Substitute variables in name
+        name = self._substitute_vars(args["name"])
+        
+        # Evaluate x, y with variable substitution
+        x_raw = args["x"] if args["x"] is not None else 200
+        y_raw = args["y"] if args["y"] is not None else 200
+        
+        x = self._eval_expr(str(x_raw)) if not isinstance(x_raw, (int, float)) else float(x_raw)
+        y = self._eval_expr(str(y_raw)) if not isinstance(y_raw, (int, float)) else float(y_raw)
+        
+        spacing = args["spacing"] if args["spacing"] is not None else 0
+
+        # If spacing is specified and there are existing nodes, position relative to last node
+        if spacing > 0 and self.graph.nodes:
+            last_node = list(self.graph.nodes.values())[-1]
+            x = last_node.x + spacing
+            y = last_node.y
+
+        node = self.graph.add_node(name=name, x=x, y=y)
         if self._cmdoutput_enabled:
             self._output_lines.append(f"+ node '{node.name}' at ({node.x}, {node.y})")
 
@@ -894,24 +1229,33 @@ class Interpreter:
             self._output_lines.append(f"+ path: {' -> '.join(names)}")
 
     def _cmd_cycle(self, args: dict) -> None:
-        """Create a cycle (path + edge back to start), auto-creating nodes."""
+        """Create a cycle (path + edge back to start), auto-creating nodes in a perfect circle.
+        
+        Creates uniformly spaced nodes in a circle and connects them in a cycle.
+        If nodes already exist, just creates the cycle edges.
+        """
         import math
         names = args["names"]
         w = args["weight"] if args["weight"] is not None else 1.0
         n = len(names)
-        # Auto-create nodes in a circle if they don't exist
-        cx, cy, radius = 400, 300, 150
+        
+        # Create nodes in a perfect circle for uniform appearance
+        cx, cy, radius = 400, 300, min(200, 100 + n * 15)  # Adaptive radius
         for i, name in enumerate(names):
             if name not in self.graph.nodes:
+                # Start from top (-π/2) and go clockwise
                 angle = 2 * math.pi * i / n - math.pi / 2
                 x = cx + radius * math.cos(angle)
                 y = cy + radius * math.sin(angle)
                 self.graph.add_node(name=name, x=x, y=y)
+        
+        # Create cycle edges
         for i in range(n):
             next_i = (i + 1) % n
             self.graph.add_edge(names[i], names[next_i], weight=w)
+        
         if self._cmdoutput_enabled:
-            self._output_lines.append(f"+ cycle: {' -> '.join(names)} -> {names[0]}")
+            self._output_lines.append(f"+ cycle: {' → '.join(names)} → {names[0]} ({n} nodes)")
 
     def _cmd_grid(self, args: dict) -> None:
         """Create a grid of nodes."""
@@ -941,13 +1285,20 @@ class Interpreter:
         import math
         n = args["n"]
         radius = args["radius"]
+        gap = args["gap"]
         start = args["start"]
-        
+        cx = args["cx"] if args["cx"] is not None else 400
+        cy = args["cy"] if args["cy"] is not None else 300
+
+        # If gap is specified, calculate radius from it (gap = arc length between nodes)
+        if gap is not None:
+            # circumference = n * gap = 2 * pi * radius
+            radius = (n * gap) / (2 * math.pi)
+
         # Parse start name
         base_name = start.rstrip('0123456789')
         start_num = int(''.join(c for c in start if c.isdigit()) or '1')
-        
-        cx, cy = 400, 300  # center
+
         for i in range(n):
             num = start_num + i
             name = f"{base_name}{num}"
@@ -956,36 +1307,67 @@ class Interpreter:
             y = cy + radius * math.sin(angle)
             self.graph.add_node(name=name, x=x, y=y)
         if self._cmdoutput_enabled:
-            self._output_lines.append(f"+ created {n} nodes in circle")
+            self._output_lines.append(f"+ created {n} nodes in circle (radius={radius:.1f})")
+
+    def _eval_expr(self, value: str) -> float:
+        """Evaluate a numeric expression, substituting variables."""
+        # Try direct float conversion first
+        try:
+            return float(value)
+        except ValueError:
+            pass
+        
+        # Check if it's a variable
+        if value in self._variables:
+            return self._variables[value]
+        
+        # Try to evaluate as expression with variable substitution
+        expr = value
+        for var_name, var_val in self._variables.items():
+            expr = expr.replace(var_name, str(var_val))
+        
+        # Safe evaluation of simple math expressions
+        try:
+            # Only allow basic math operators
+            if all(c in "0123456789.+-*/^() " for c in expr):
+                expr = expr.replace("^", "**")
+                return float(eval(expr))
+        except Exception:
+            pass
+        
+        return 0.0
 
     def _cmd_let(self, args: dict) -> None:
-        """Variable assignment (stored in output for reference, not persisted)."""
+        """Variable assignment with math expression evaluation."""
         name = args["name"]
-        value = args["value"]
+        
         if "op" in args:
             op = args["op"]
-            value2 = args["value2"]
-            try:
-                v1 = float(value)
-                v2 = float(value2)
-                if op == "+":
-                    result = v1 + v2
-                elif op == "-":
-                    result = v1 - v2
-                elif op == "*":
-                    result = v1 * v2
-                elif op == "/":
-                    result = v1 / v2 if v2 != 0 else 0
-                else:
-                    result = 0
-                if self._cmdoutput_enabled:
-                    self._output_lines.append(f"let {name} = {result}")
-            except:
-                if self._cmdoutput_enabled:
-                    self._output_lines.append(f"let {name} = {value} {op} {value2}")
+            v1 = self._eval_expr(args["value"])
+            v2 = self._eval_expr(args["value2"])
+            
+            if op == "+":
+                result = v1 + v2
+            elif op == "-":
+                result = v1 - v2
+            elif op == "*":
+                result = v1 * v2
+            elif op == "/":
+                result = v1 / v2 if v2 != 0 else 0
+            elif op == "^":
+                result = v1 ** v2
+            elif op == "%":
+                result = v1 % v2 if v2 != 0 else 0
+            else:
+                result = 0
         else:
-            if self._cmdoutput_enabled:
-                self._output_lines.append(f"let {name} = {value}")
+            result = self._eval_expr(args["value"])
+        
+        # Store the variable
+        self._variables[name] = result
+        
+        if self._cmdoutput_enabled:
+            self._output_lines.append(f"let {name} = {result}")
 
     def _cmd_edge(self, args: dict) -> None:
         w = args["weight"] if args["weight"] is not None else 1.0
@@ -1071,10 +1453,171 @@ class Interpreter:
                 self._output_lines.append(f"Rename failed")
 
     def _cmd_color(self, args: dict) -> None:
-        self.graph.set_node_color(args["name"], args["color"])
+        # Substitute variables in node name
+        name = self._substitute_vars(args["name"])
+        self.graph.set_node_color(name, args["color"])
         if self._cmdoutput_enabled:
             self._output_lines.append(
-                f"Color '{args['name']}' = {args['color']}")
+                f"Color '{name}' = {args['color']}")
+
+    def _cmd_compute(self, args: dict) -> None:
+        """Execute math expression and store result in variable."""
+        import math
+        name = args["name"]
+        expr = args["expr"]
+        
+        # Safe evaluation with math functions
+        try:
+            # Allow math operators and functions
+            allowed = "0123456789.+-*/^() "
+            math_funcs = {"sqrt": math.sqrt, "sin": math.sin, "cos": math.cos, 
+                         "tan": math.tan, "abs": abs, "pow": pow, "log": math.log,
+                         "exp": math.exp, "pi": math.pi, "e": math.e}
+            
+            # Add current variables to the evaluation context
+            eval_context = {"__builtins__": {}}
+            eval_context.update(math_funcs)
+            eval_context.update(self._variables)
+            
+            # Check for basic safety then evaluate
+            expr_check = expr.replace("^", "**")
+            if all(c in allowed or c.isalpha() or c == "_" for c in expr_check):
+                result = float(eval(expr_check, eval_context))
+                self._variables[name] = result
+                if self._cmdoutput_enabled:
+                    self._output_lines.append(f"compute {name} = {result}")
+        except Exception as e:
+            if self._cmdoutput_enabled:
+                self._output_lines.append(f"compute {name} = error: {e}")
+
+    def _cmd_while(self, args: dict) -> None:
+        """Execute while loop with condition."""
+        var_name = args["var"]
+        op = args["op"]
+        threshold = args["threshold"]
+        commands = args["commands"]
+        
+        max_iterations = 10000  # Safety limit
+        iterations = 0
+        
+        while iterations < max_iterations:
+            # Get current variable value
+            current = self._variables.get(var_name, 0)
+            
+            # Check condition
+            condition_met = False
+            if op == "<" and current < threshold:
+                condition_met = True
+            elif op == ">" and current > threshold:
+                condition_met = True
+            elif op == "<=" and current <= threshold:
+                condition_met = True
+            elif op == ">=" and current >= threshold:
+                condition_met = True
+            elif op == "==" and current == threshold:
+                condition_met = True
+            elif op == "!=" and current != threshold:
+                condition_met = True
+            
+            if not condition_met:
+                break
+            
+            # Execute loop commands
+            for cmd in commands:
+                try:
+                    self._exec(cmd)
+                except Exception as e:
+                    if self._cmdoutput_enabled:
+                        self._output_lines.append(f"[While loop error] {e}")
+                    break
+            
+            iterations += 1
+        
+        if iterations >= max_iterations:
+            if self._cmdoutput_enabled:
+                self._output_lines.append(f"[While loop] stopped after {max_iterations} iterations")
+
+    def _cmd_mandelbrot(self, args: dict) -> None:
+        """Generate Mandelbrot set nodes and colors.
+
+        Args:
+            prefix: Node name prefix (e.g., "M")
+            width: Number of columns
+            height: Number of rows
+            xmin, xmax: Real axis range
+            ymin, ymax: Imaginary axis range
+            max_iter: Maximum iterations for escape test
+            spacing: Pixel spacing between nodes
+            node_radius: Radius of nodes (default: 3 for pixel-like appearance)
+        """
+        prefix = args.get("prefix", "M")
+        width = int(args.get("width", 50))
+        height = int(args.get("height", 35))
+        xmin = args.get("xmin", -2.5)
+        xmax = args.get("xmax", 1.0)
+        ymin = args.get("ymin", -1.0)
+        ymax = args.get("ymax", 1.0)
+        max_iter = int(args.get("max_iter", 100))
+        spacing = args.get("spacing", 6.0)
+        node_radius = args.get("node_radius", 3.0)  # Small radius for pixel appearance
+
+        dx = (xmax - xmin) / (width - 1)
+        dy = (ymax - ymin) / (height - 1)
+
+        # Get cached escape function
+        escape_fn = self._get_mandelbrot_escape(max_iter)
+
+        # Enable batch mode for performance
+        self.graph.begin_batch()
+
+        try:
+            # Create nodes and compute Mandelbrot colors
+            for row in range(height):
+                ci = ymax - row * dy  # Flip Y for screen coordinates
+                for col in range(width):
+                    cr = xmin + col * dx
+                    node_name = f"{prefix}{row}_{col}"
+
+                    # Position node
+                    x_px = col * spacing
+                    y_px = row * spacing
+                    node = self.graph.add_node(node_name, x=x_px, y=y_px)
+                    # Set small radius for pixel-like appearance
+                    node.radius = node_radius
+
+                    # Compute Mandelbrot escape time (use cache if enabled)
+                    if self._cache_enabled:
+                        n = escape_fn(cr, ci)
+                    else:
+                        # Direct computation without cache
+                        zr, zi = 0.0, 0.0
+                        n = 0
+                        while n < max_iter and zr * zr + zi * zi <= 4:
+                            zr_new = zr * zr - zi * zi + cr
+                            zi = 2 * zr * zi + ci
+                            zr = zr_new
+                            n += 1
+
+                    # Convert iteration count to color
+                    if n == max_iter:
+                        color = "#000000"  # Inside set - black
+                    else:
+                        # Smooth gradient coloring
+                        t = n / max_iter
+                        r = int(9 * (1 - t) * t * t * t * 255)
+                        g = int(15 * (1 - t) * (1 - t) * t * t * 255)
+                        b = int(8.5 * (1 - t) * (1 - t) * (1 - t) * t * 255)
+                        color = f"#{r:02x}{g:02x}{b:02x}"
+
+                    self.graph.set_node_color(node_name, color)
+        finally:
+            # Always exit batch mode, even if error occurs
+            self.graph.end_batch()
+        
+        if self._cmdoutput_enabled:
+            self._output_lines.append(
+                f"Mandelbrot: {width}x{height} grid, max_iter={max_iter}, "
+                f"[{xmin}, {xmax}] x [{ymin}, {ymax}]")
 
     def _cmd_run(self, args: dict) -> None:
         import networkx as nx
@@ -1186,6 +1729,15 @@ class Interpreter:
         elif kind == "spring":
             self.graph.layout_spring()
             self._output_lines.append("Applied spring layout")
+        elif kind == "hierarchical":
+            self.graph.layout_hierarchical()
+            self._output_lines.append("Applied hierarchical layout")
+        elif kind == "grid":
+            self.graph.layout_grid()
+            self._output_lines.append("Applied grid layout")
+        elif kind == "spectral":
+            self.graph.layout_spectral()
+            self._output_lines.append("Applied spectral layout")
         else:
             self._output_lines.append(f"Unknown layout: {kind}")
 
@@ -1197,21 +1749,24 @@ class Interpreter:
         self._output_lines.append("Fit view (handled by GUI)")
 
     def _cmd_iter_node(self, args: dict) -> None:
-        """Create nodes in a loop with variable substitution."""
+        """Create nodes in a loop with variable substitution and optional spacing."""
         var = args["var"]
         start = int(args["start"])
         end = int(args["end"])
         step = int(args["step"])
         name_pattern = args["name_pattern"]
-        x, y = args["x"], args["y"]
-        
+        x = args["x"] if args["x"] is not None else 200
+        y = args["y"] if args["y"] is not None else 200
+        spacing = args["spacing"] if args["spacing"] is not None else 60
+
         count = 0
         for i in range(start, end, step):
             # Substitute variable in name pattern (e.g., "v{i}" -> "v1")
             name = name_pattern.replace("{" + var + "}", str(i)).replace(var, str(i))
-            self.graph.add_node(name=name, x=x + count * 60, y=y)
+            node_x = x + count * spacing
+            self.graph.add_node(name=name, x=node_x, y=y)
             count += 1
-        
+
         if self._cmdoutput_enabled:
             self._output_lines.append(f"+ created {count} nodes from {start} to {end-step}")
 
@@ -1425,7 +1980,7 @@ class DSLConsole(QWidget):
     CMD_HINTS = {
         "set": "set directed true|false\nset weighted true|false",
         "cmdoutput": "cmdoutput true|false  — enable/disable command output",
-        "node": "node <name> [at <x> <y>]\nExample: node A at 100 200",
+        "node": "node <name> [at <x> <y>] [spacing <s>]\nExample: node A at 100 200  or  node A spacing 50",
         "nodes": "nodes <n1> <n2> ... [at <x> <y>]\nExample: nodes A B C at 100 200",
         "edge": "edge <src> -> <tgt> [weight <w>]  — directed\nedge <src> -- <tgt> [weight <w>]  — undirected\nedge <src> <-> <tgt> [weight <w>]  — bidirectional\nedge <src> <=> <tgt> [weight <w>]  — dual (two edges)",
         "edges": "edges <n1> <n2> ... -> <tgt> [weight <w>]\nExample: edges A B C -> D",
@@ -1436,8 +1991,8 @@ class DSLConsole(QWidget):
         "wheel": "wheel <center> <rim1> <rim2> ...\nCreates cycle + center connected to all",
         "ladder": "ladder <prefix> <n> [weight <w>]\nExample: ladder L 4 weight 1",
         "grid": "grid <rows> <cols> [spacing <s>] [start <name>]\nExample: grid 3 4 spacing 100 start N",
-        "circle": "circle <n> [radius <r>] [start <name>]\nExample: circle 6 radius 150 start V",
-        "iter": "iter <var> in <start>..<end> [by <step>]: <cmd>\nfor <var> in 1..5: node v at 100 200",
+        "circle": "circle <n> [radius <r>] [gap <g>] [center <x> <y>] [start <name>]\nExample: circle 8 radius 150 gap 50 center 500 400",
+        "iter": "iter <var> in <start>..<end> [by <step>]: node <pattern> [spacing <s>]\nfor i in 1..5: node v{i} spacing 50",
         "toggle": "toggle <src> <tgt>  — toggle bidirectional",
         "separate": "separate <src> <tgt>  — split into two edges",
         "curve": "curve <src> <tgt> <amount>\nPositive = curve left, negative = curve right",
